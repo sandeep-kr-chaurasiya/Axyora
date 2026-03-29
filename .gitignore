@@ -1,0 +1,47 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Environment files
+*.env
+*.env.local
+*.env.*.local
+!.env.example
+!*.env.example
+
+# Local runtime/state
+*.db
+*.sqlite
+*.sqlite3
+*.log
+ai-engine/logs/
+ai-engine/engine.pid
+
+# Node / Expo
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/dist/
+mobile/web-build/
+
+# iOS / Xcode generated
+mobile/ios/Pods/
+mobile/ios/build/
+mobile/ios/*.xcworkspace/xcuserdata/
+mobile/ios/*.xcodeproj/xcuserdata/
+mobile/ios/.symlinks/
+mobile/ios/DerivedData/
+
+# Android generated
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+
+# OS / editor
+.DS_Store
+.vscode/

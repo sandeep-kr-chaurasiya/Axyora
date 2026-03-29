@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Axyora",
+    "slug": "axyora",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "scheme": "axyora",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#07080C"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.axyora.mobile",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Axyora needs photo access to build your local memory index.",
+        "NSMicrophoneUsageDescription": "Axyora needs microphone/audio access to index voice notes.",
+        "NSDocumentsFolderUsageDescription": "Axyora reads documents you explicitly choose to index."
+      }
+    },
+    "android": {
+      "package": "com.axyora.mobile",
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_AUDIO",
+        "READ_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-document-picker",
+      "expo-media-library",
+      "expo-asset"
+    ]
+  }
+}

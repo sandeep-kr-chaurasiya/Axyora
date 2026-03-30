@@ -30,6 +30,12 @@ export interface QueueItem {
   createdAt: number;
   attemptedAt?: number;
   completedAt?: number;
+  /** Total processing duration in milliseconds, set when job completes */
+  processingTime?: number;
+  /** Timestamp when the job finally failed (non-retriable) */
+  failedAt?: number;
+  /** Number of retry attempts that have been made for this item */
+  retryCount?: number;
 }
 
 export interface QueueState {
@@ -173,6 +179,7 @@ class PersistentQueue extends EventEmitter {
           if (status.status === "done") {
             item.status = "done";
             item.completedAt = Date.now();
+            item.processingTime = item.completedAt - (item.attemptedAt ?? item.createdAt);
             isComplete = true;
           } else if (status.status === "error") {
             throw new Error(status.error || "Job failed");
@@ -206,12 +213,14 @@ class PersistentQueue extends EventEmitter {
       } else {
         item.status = "error";
         item.completedAt = Date.now();
+        item.failedAt = item.completedAt;
         item.error = {
           code: this.errorCode(error),
           message: error instanceof Error ? error.message : "Unknown error",
           retriable: false,
           retryCount,
         };
+        item.retryCount = retryCount;
         this.emitProgress(item);
       }
     }
@@ -320,6 +329,39 @@ class PersistentQueue extends EventEmitter {
     if (!this.running) {
       this.start();
     }
+  }
+
+  async retry(fileId: string): Promise<void> {
+    const item = this.state.items.find((i) => i.id === fileId);
+    if (!item) return;
+
+    item.status = "pending";
+    item.error = undefined;
+    item.retryCount = (item.retryCount ?? 0) + 1;
+
+    const index = this.state.items.indexOf(item);
+    if (index >= 0) {
+      this.state.currentIndex = Math.min(this.state.currentIndex, index);
+    }
+
+    await this.checkpoint();
+    if (!this.running) {
+      this.start();
+    }
+  }
+
+  async remove(fileId: string): Promise<void> {
+    const index = this.state.items.findIndex((i) => i.id === fileId);
+    if (index === -1) return;
+
+    this.state.items.splice(index, 1);
+
+    if (this.state.currentIndex > index) {
+      this.state.currentIndex = Math.max(0, this.state.currentIndex - 1);
+    }
+
+    this.emit("queue-size", this.state.items.length);
+    await this.checkpoint();
   }
 }
 

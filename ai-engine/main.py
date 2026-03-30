@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 from processor import detect_file_type, process_file_bytes
 from metadata_db import JobStore
 from ingestion import IngestionEngine
+from local_storage import get_local_storage
 from production_config import (
     MAX_FILE_SIZE_BYTES,
     SUPPORTED_FILE_TYPES,
@@ -68,6 +69,7 @@ _vector_store = None
 _query_engine = None
 _index_registry = None
 _ingestion_engine = None
+_local_storage = None
 job_store: JobStore = None
 
 _job_queue: asyncio.Queue[dict] = None
@@ -100,6 +102,13 @@ def get_index_registry():
         from index_registry import IndexRegistry
         _index_registry = IndexRegistry()
     return _index_registry
+
+def get_local_storage():
+    global _local_storage
+    if _local_storage is None:
+        from local_storage import get_local_storage as create_storage
+        _local_storage = create_storage()
+    return _local_storage
 
 def get_ingestion_engine():
     global _ingestion_engine
@@ -157,6 +166,7 @@ async def _job_worker(worker_id: int):
 async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_path, modified_at=None):
     loop = asyncio.get_event_loop()
     start_time = time.time()
+    local_storage = get_local_storage()
     try:
         _update_job(job_id, status="processing", progress=5, current_step="Hashing...")
         file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -212,6 +222,14 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
         registry.upsert(user_id=user_id, file_hash=file_hash, file_name=file_name, file_path=file_path, chunks=len(chunks))
         registry.persist()
         v_store.persist()
+
+        # Update local storage to mark as indexed (completed)
+        # Find the queue item for this job and mark it as complete
+        queue = local_storage.get_pending_files()
+        for item in queue:
+            if file_id.endswith(item["fileId"].split("_")[-1:][0] if "_" in item["fileId"] else ""):
+                local_storage.update_processing_status(item["id"], "complete", 100)
+                break
 
         _update_job(job_id, status="done", progress=100, current_step="Complete", chunks_processed=len(chunks), completed_at=time.time())
         logger.job_completed(job_id, user_id, file_name, len(chunks), time.time()-start_time)
@@ -403,3 +421,116 @@ async def clear(user_id: str):
     get_index_registry().delete_by_user(user_id)
     job_store.cleanup_for_user(user_id)
     return {"status": "cleared"}
+
+# ---------------------------------------------------------------------------
+# LOCAL STORAGE ENDPOINTS (Local-First Data Storage)
+# ---------------------------------------------------------------------------
+
+@app.post("/local-storage/discover-files")
+async def discover_files(user_id: str):
+    """
+    Stage 1: Discover and store all device files locally FIRST
+    Before any indexing or processing
+    """
+    try:
+        # Scan the Axyora library directory
+        ingestion = get_ingestion_engine()
+        files = ingestion.scan_directory(return_files=True)
+        
+        local_storage = get_local_storage()
+        total, new_ids = await asyncio.get_event_loop().run_in_executor(
+            None, local_storage.store_discovered_files, files
+        )
+        
+        logger.info(f"[LocalStorage] Discovered {total} files for user {user_id[:20]}")
+        return {
+            "status": "success",
+            "totalFiles": total,
+            "newFiles": len(new_ids),
+            "previouslyProcessed": total - len(new_ids)
+        }
+    except Exception as e:
+        logger.error("Failed to discover files", error=e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/local-storage/queue-for-processing")
+async def queue_for_processing(user_id: str, file_ids: List[str] = None):
+    """
+    Stage 2: Queue discovered files for processing
+    Moves files from local storage to processing queue
+    """
+    try:
+        local_storage = get_local_storage()
+        
+        # If no specific files provided, queue all non-indexed files
+        if not file_ids:
+            files = local_storage._read_json(local_storage.files_db)
+            file_ids = [f["id"] for f in files if not f["indexed"]]
+        
+        queued = await asyncio.get_event_loop().run_in_executor(
+            None, local_storage.queue_files_for_processing, file_ids
+        )
+        
+        logger.info(f"[LocalStorage] Queued {queued} files for user {user_id[:20]}")
+        return {
+            "status": "success",
+            "queued": queued
+        }
+    except Exception as e:
+        logger.error("Failed to queue files", error=e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/local-storage/progress")
+async def get_local_progress(user_id: str):
+    """
+    Get current indexing progress
+    Shows what's stored, queued, processing, and indexed
+    """
+    try:
+        local_storage = get_local_storage()
+        progress = await asyncio.get_event_loop().run_in_executor(
+            None, local_storage.get_progress
+        )
+        return {
+            "status": "success",
+            **progress
+        }
+    except Exception as e:
+        logger.error("Failed to get progress", error=e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/local-storage/export")
+async def export_storage(user_id: str):
+    """
+    Export entire local storage database
+    Useful for backup, debugging, and auditing
+    """
+    try:
+        local_storage = get_local_storage()
+        database = await asyncio.get_event_loop().run_in_executor(
+            None, local_storage.export_database
+        )
+        return {
+            "status": "success",
+            "database": database
+        }
+    except Exception as e:
+        logger.error("Failed to export storage", error=e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/local-storage/clear")
+async def clear_local_storage(user_id: str):
+    """
+    Clear all local storage (Stage 1 only)
+    Does NOT clear indexed data in vector store
+    """
+    try:
+        local_storage = get_local_storage()
+        await asyncio.get_event_loop().run_in_executor(
+            None, local_storage.clear_all
+        )
+        logger.info(f"[LocalStorage] Cleared all local storage for user {user_id[:20]}")
+        return {"status": "success", "message": "Local storage cleared"}
+    except Exception as e:
+        logger.error("Failed to clear local storage", error=e)
+        raise HTTPException(status_code=500, detail=str(e))

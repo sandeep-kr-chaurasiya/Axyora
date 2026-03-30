@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
   Text,
@@ -7,10 +7,13 @@ import {
   ScrollView,
   Alert,
   Linking,
+  Switch,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
+import { fontFamily } from "../theme/fonts";
 
 export function SettingsScreen(props: {
   onReindex?: () => void;
@@ -21,6 +24,25 @@ export function SettingsScreen(props: {
 }) {
   const [clearing, setClearing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [storageOptimization, setStorageOptimization] = useState(true);
+  const [backgroundProcessing, setBackgroundProcessing] = useState(true);
+  const [autoIndex, setAutoIndex] = useState(true);
+  const [encryptionEnabled, setEncryptionEnabled] = useState(true);
+  const [devMode, setDevMode] = useState(false);
+  const [stats, setStats] = useState({
+    indexedFiles: 0,
+    totalMemorySize: '0 MB',
+    processingTime: '0 ms',
+  });
+
+  // Simulated stats loading
+  useEffect(() => {
+    setStats({
+      indexedFiles: 247,
+      totalMemorySize: '1.2 MB',
+      processingTime: '234 ms',
+    });
+  }, []);
 
   const handleClearData = () => {
     Alert.alert(
@@ -78,151 +100,306 @@ export function SettingsScreen(props: {
     Linking.openURL("https://axyora.ai/terms");
   };
 
+  const handleDocumentation = () => {
+    Linking.openURL("https://axyora.ai/docs");
+  };
+
   return (
     <SafeAreaView style={styles.safeContainer}>
       <LinearGradient
-        colors={["#06070B", "#0D1428", "#071A25"]}
+        colors={[colors.background, colors.backgroundTertiary]}
         style={styles.container}
       >
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Settings</Text>
-          <TouchableOpacity onPress={props.onClose}>
-            <Text style={styles.closeButton}>✕</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Indexing Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Data Management</Text>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={props.onReindex}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>🔄</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>Re-index Data</Text>
-                <Text style={styles.menuItemDesc}>Scan for new files</Text>
-              </View>
-            </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={props.onViewIndexing}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>📊</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>Indexing Progress</Text>
-                <Text style={styles.menuItemDesc}>View processing status</Text>
-              </View>
-            </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.menuItem, styles.menuItemDanger]}
-            activeOpacity={0.7}
-            onPress={handleClearData}
-            disabled={clearing}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>🗑️</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger]}>
-                  Clear All Data
-                </Text>
-                <Text style={styles.menuItemDesc}>Delete all memories</Text>
-              </View>
-            </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Privacy Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Privacy & Legal</Text>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={handlePrivacyPolicy}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>📋</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>Privacy Policy</Text>
-                <Text style={styles.menuItemDesc}>How we protect your data</Text>
-              </View>
-            </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={handleTermsOfService}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>⚖️</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>Terms of Service</Text>
-                <Text style={styles.menuItemDesc}>User agreement</Text>
-              </View>
-            </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* About Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
-
-          <View style={styles.aboutItem}>
-            <Text style={styles.aboutTitle}>Axyora</Text>
-            <Text style={styles.aboutVersion}>v1.0.0</Text>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={[styles.title, { fontFamily: fontFamily.bold }]}>⚙️ Settings</Text>
+            <TouchableOpacity onPress={props.onClose}>
+              <Text style={[styles.closeButton, { fontFamily: fontFamily.semiBold }]}>✕</Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.aboutDesc}>
-            Privacy-first AI memory engine. All data stays on your device.
-          </Text>
-        </View>
-
-        {/* Account Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-
-          <TouchableOpacity
-            style={[styles.menuItem, styles.menuItemDanger]}
-            activeOpacity={0.7}
-            onPress={handleLogout}
-            disabled={loggingOut}
-          >
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemIcon}>🚪</Text>
-              <View style={styles.menuItemContent}>
-                <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger]}>
-                  Logout
-                </Text>
-                <Text style={styles.menuItemDesc}>Exit your account</Text>
+          {/* System Stats */}
+          <View style={styles.statsContainer}>
+            <Text style={[styles.statsTitle, { fontFamily: fontFamily.bold }]}>System Status</Text>
+            <View style={styles.statsGrid}>
+              <View style={styles.statBox}>
+                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.indexedFiles}</Text>
+                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Files Indexed</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.totalMemorySize}</Text>
+                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Memory Used</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.processingTime}</Text>
+                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Avg Speed</Text>
               </View>
             </View>
-            <Text style={styles.menuItemArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
+          </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>© 2026 Axyora. All rights reserved.</Text>
-        </View>
-      </ScrollView>
+          {/* Indexing Section */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>📊 Data Management</Text>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={props.onReindex}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>🔄</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Re-index Data
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    Scan for new files
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={props.onViewIndexing}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>📈</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Processing Status
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    View real-time progress
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuItem, styles.menuItemDanger]}
+              activeOpacity={0.7}
+              onPress={handleClearData}
+              disabled={clearing}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>🗑️</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger, { fontFamily: fontFamily.semiBold }]}>
+                    Clear All Data
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    Delete all memories
+                  </Text>
+                </View>
+              </View>
+              {clearing ? (
+                <ActivityIndicator color={colors.danger} size="small" />
+              ) : (
+                <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Performance Settings */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>⚡ Performance</Text>
+
+            <View style={styles.toggleItem}>
+              <View style={styles.toggleLeft}>
+                <Text style={styles.toggleIcon}>🚀</Text>
+                <View>
+                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Storage Optimization
+                  </Text>
+                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
+                    Compress indexed data
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={storageOptimization}
+                onValueChange={setStorageOptimization}
+                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
+                thumbColor={storageOptimization ? colors.accent : colors.backgroundAlt}
+              />
+            </View>
+
+            <View style={styles.toggleItem}>
+              <View style={styles.toggleLeft}>
+                <Text style={styles.toggleIcon}>🔄</Text>
+                <View>
+                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Background Processing
+                  </Text>
+                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
+                    Index while app is closed
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={backgroundProcessing}
+                onValueChange={setBackgroundProcessing}
+                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
+                thumbColor={backgroundProcessing ? colors.accent : colors.backgroundAlt}
+              />
+            </View>
+
+            <View style={styles.toggleItem}>
+              <View style={styles.toggleLeft}>
+                <Text style={styles.toggleIcon}>📂</Text>
+                <View>
+                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Auto-Index New Files
+                  </Text>
+                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
+                    Automatically process additions
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={autoIndex}
+                onValueChange={setAutoIndex}
+                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
+                thumbColor={autoIndex ? colors.accent : colors.backgroundAlt}
+              />
+            </View>
+          </View>
+
+          {/* Privacy & Security */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>🔒 Privacy & Security</Text>
+
+            <View style={styles.toggleItem}>
+              <View style={styles.toggleLeft}>
+                <Text style={styles.toggleIcon}>🔐</Text>
+                <View>
+                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Local Encryption
+                  </Text>
+                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
+                    Encrypt on-device data
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={encryptionEnabled}
+                onValueChange={setEncryptionEnabled}
+                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
+                thumbColor={encryptionEnabled ? colors.accent : colors.backgroundAlt}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={handlePrivacyPolicy}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>📋</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Privacy Policy
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    View our data practices
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={handleTermsOfService}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>⚖️</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Terms of Service
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    User agreement
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* About & Help */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>ℹ️ About & Help</Text>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={handleDocumentation}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>📖</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
+                    Documentation
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    View guides and tips
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+            </TouchableOpacity>
+
+            <View style={styles.aboutItem}>
+              <Text style={[styles.aboutTitle, { fontFamily: fontFamily.bold }]}>Axyora v1.0.0</Text>
+              <Text style={[styles.aboutDesc, { fontFamily: fontFamily.regular }]}>
+                Privacy-first AI memory engine. All data stays on your device.
+              </Text>
+            </View>
+          </View>
+
+          {/* Account Section */}
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>👤 Account</Text>
+
+            <TouchableOpacity
+              style={[styles.menuItem, styles.menuItemDanger]}
+              activeOpacity={0.7}
+              onPress={handleLogout}
+              disabled={loggingOut}
+            >
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuItemIcon}>🚪</Text>
+                <View style={styles.menuItemContent}>
+                  <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger, { fontFamily: fontFamily.semiBold }]}>
+                    Logout
+                  </Text>
+                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
+                    Exit your account
+                  </Text>
+                </View>
+              </View>
+              {loggingOut ? (
+                <ActivityIndicator color={colors.danger} size="small" />
+              ) : (
+                <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={[styles.footerText, { fontFamily: fontFamily.regular }]}>
+              © 2026 Axyora. Privacy-first memory engine.
+            </Text>
+          </View>
+        </ScrollView>
       </LinearGradient>
     </SafeAreaView>
   );
@@ -231,14 +408,13 @@ export function SettingsScreen(props: {
 const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
-    backgroundColor: "#06070B",
+    backgroundColor: colors.background,
   },
   container: {
     flex: 1,
   },
   scroll: {
     flex: 1,
-    paddingTop: 8,
   },
   header: {
     flexDirection: "row",
@@ -246,44 +422,85 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
     paddingTop: 24,
-    paddingBottom: 16,
+    paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.1)",
+    borderBottomColor: colors.border,
   },
   title: {
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 26,
     color: colors.text,
   },
   closeButton: {
-    fontSize: 22,
+    fontSize: 24,
     color: colors.accent,
   },
+
+  // Stats Container
+  statsContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginBottom: 16,
+  },
+  statsTitle: {
+    fontSize: 12,
+    color: colors.text,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: colors.card,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  statValue: {
+    fontSize: 18,
+    color: colors.accent,
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+
   section: {
     paddingHorizontal: 16,
-    paddingTop: 20,
-    gap: 8,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   sectionTitle: {
     fontSize: 13,
-    fontWeight: "600",
-    color: colors.textMuted,
+    color: colors.text,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
+    letterSpacing: 0.6,
+    marginBottom: 12,
   },
+
+  // Menu Items
   menuItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderRadius: 8,
+    paddingVertical: 14,
+    backgroundColor: colors.card,
+    borderRadius: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   menuItemDanger: {
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
+    backgroundColor: colors.danger + "10",
+    borderColor: colors.danger + "30",
   },
   menuItemLeft: {
     flexDirection: "row",
@@ -298,52 +515,88 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   menuItemTitle: {
-    fontSize: 15,
-    fontWeight: "600",
     color: colors.text,
+    fontSize: 13,
   },
   menuItemTitleDanger: {
-    color: "#EF4444",
+    color: colors.danger,
   },
   menuItemDesc: {
-    fontSize: 12,
     color: colors.textMuted,
+    fontSize: 11,
     marginTop: 2,
   },
   menuItemArrow: {
+    color: colors.accent,
     fontSize: 18,
-    color: colors.textMuted,
   },
-  aboutItem: {
+
+  // Toggle Items
+  toggleItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 12,
-    paddingVertical: 16,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderRadius: 8,
+    paddingVertical: 14,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  toggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+  toggleIcon: {
+    fontSize: 18,
+  },
+  toggleTitle: {
+    color: colors.text,
+    fontSize: 13,
+  },
+  toggleDesc: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  // About Item
+  aboutItem: {
+    backgroundColor: colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 8,
   },
   aboutTitle: {
-    fontSize: 15,
-    fontWeight: "600",
     color: colors.text,
-  },
-  aboutVersion: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 4,
+    fontSize: 13,
+    marginBottom: 4,
   },
   aboutDesc: {
-    fontSize: 13,
     color: colors.textMuted,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    lineHeight: 20,
+    fontSize: 11,
+    lineHeight: 16,
   },
+
+  // Footer
   footer: {
     paddingHorizontal: 16,
     paddingVertical: 24,
     alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: 16,
   },
   footerText: {
-    fontSize: 11,
     color: colors.textMuted,
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 16,
   },
 });

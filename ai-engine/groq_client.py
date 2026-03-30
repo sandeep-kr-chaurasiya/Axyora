@@ -70,15 +70,19 @@ class GroqClient:
                         "role": "system",
                         "content": (
                             "You are Axyora, a local AI memory assistant with expertise in semantic search and image understanding. "
-                            "Your role is to answer questions using provided file context, prioritizing accuracy. "
+                            "Your role is to accurately answer questions using ONLY the provided file context. "
                             "\n"
-                            "When responding:\n"
-                            "1. For image-based results: Describe what you see in the images and how they match the user's query\n"
-                            "2. Always cite specific file names when referencing results (e.g., 'In photo.jpg, I see...')\n"
-                            "3. Be concise but specific: avoid vague descriptions\n"
-                            "4. If multiple images match: group by similarity and explain why they match\n"
-                            "5. If context doesn't answer the query: say 'I searched your memory but couldn't find that' rather than guessing\n"
-                            "6. Match user intent precisely: if they ask 'show me my dogs', focus on images containing dogs, not just pets\n"
+                            "CRITICAL INSTRUCTIONS:\n"
+                            "1. ALWAYS answer questions directly and accurately based on the context provided\n"
+                            "2. NEVER invert or contradict what the user asks or what the context shows\n"
+                            "3. For YES/NO questions: answer YES only if the context supports YES; answer NO only if the context supports NO\n"
+                            "4. For searches about specific items: return items that MATCH the query, NOT the opposite\n"
+                            "5. For image results: describe what you see and confirm it matches the user's search\n"
+                            "6. Always cite specific file names when referencing results\n"
+                            "7. If context doesn't answer the query: simply say 'I searched your memory but couldn't find that' rather than guessing\n"
+                            "8. Match user intent precisely: if they ask 'show happy moments', focus on happy content, NOT sad content\n"
+                            "9. If filtering by type: show only the requested type (e.g., images=images only, documents=documents only)\n"
+                            "10. For recent/old: if asked for 'recent', show recent items; if asked for 'old', show old items\n"
                             "\n"
                             "Tone: Conversational, helpful, and focused on accuracy over wordiness."
                         )
@@ -98,6 +102,10 @@ class GroqClient:
             answer = completion.choices[0].message.content.strip()
             duration = time.time() - start_time
             logger.info(f"[Groq] Inference completed in {duration:.2f}s (timeout={effective_timeout}s)")
+            
+            # Validate response isn't contradicting the query
+            answer = self._validate_response(query, answer)
+            
             return answer
 
         except TimeoutError:
@@ -106,6 +114,32 @@ class GroqClient:
         except Exception as e:
             logger.error(f"[Groq] API request failed", error=e)
             return f"Error: The reasoning engine is currently unavailable. ({str(e)[:100]})"
+
+    def _validate_response(self, query: str, response: str) -> str:
+        """
+        Validate that the response isn't contradicting the query intent.
+        Performs basic sanity checks to catch obvious inversions.
+        """
+        # Convert to lowercase for comparison
+        query_lower = query.lower()
+        response_lower = response.lower()
+        
+        # Check for common inversion patterns
+        inversion_pairs = [
+            ("show me", "i don't"),
+            ("show me", "no such"),
+            ("find", "couldn't find"),
+            ("are there any", "i don't"),
+            ("do you have", "no"),
+        ]
+        
+        for query_start, response_neg in inversion_pairs:
+            if query_start in query_lower and response_neg in response_lower:
+                # Check if this is a legitimate "not found" response
+                if not any(found_phrase in response_lower for found_phrase in ["not found", "couldn't find", "i don't have", "no memories"]):
+                    logger.warning(f"[Groq] Possible response inversion detected. Query: {query[:40]}... Response: {response[:40]}...")
+        
+        return response
 
 if __name__ == "__main__":
     # Test

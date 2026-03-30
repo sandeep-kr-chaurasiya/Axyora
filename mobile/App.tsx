@@ -1,20 +1,23 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 
 import { useAuth } from "./src/hooks/useAuth";
 import { useAppLifecycle } from "./src/hooks/useAppLifecycle";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { AuthScreen } from "./src/screens/AuthScreen";
-import { EnhancedOnboardingScreen } from "./src/screens/EnhancedOnboardingScreen";
+import { SwipeableOnboardingScreen } from "./src/screens/SwipeableOnboardingScreen";
 import { EnhancedPermissionsScreen } from "./src/screens/EnhancedPermissionsScreen";
 import { AutoIndexingScreen } from "./src/screens/AutoIndexingScreen";
 import { SplashScreen } from "./src/screens/SplashScreen";
+import { persistentQueue } from "./src/services/persistentQueue";
 import { colors } from "./src/theme/colors";
 
 const ONBOARDING_KEY = "@axyora/onboarding-complete";
 const PERMISSIONS_KEY = "@axyora/permissions-granted";
 const AUTO_SCAN_KEY = "@axyora_auto_scan_state";
+const ANDROID_DIRECTORY_URI_KEY = "@axyora/android-directory-uri";
+const QUEUE_STORAGE_KEY = "@axyora/persistent-queue";
 
 export default function App() {
   const { user, loading, signIn, signUp } = useAuth();
@@ -25,6 +28,7 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [permissionsDone, setPermissionsDone] = useState(false);
   const [autoScanDone, setAutoScanDone] = useState(false);
+  const [queueReady, setQueueReady] = useState(false);
   const [bootLoading, setBootLoading] = useState(true);
 
   useEffect(() => {
@@ -40,6 +44,11 @@ export default function App() {
         AsyncStorage.getItem(PERMISSIONS_KEY),
         AsyncStorage.getItem(AUTO_SCAN_KEY),
       ]);
+
+      const [androidDirectoryUri, queueStateRaw] = await Promise.all([
+        Platform.OS === "android" ? AsyncStorage.getItem(ANDROID_DIRECTORY_URI_KEY) : Promise.resolve(null),
+        AsyncStorage.getItem(QUEUE_STORAGE_KEY),
+      ]);
       if (!alive) {
         return;
       }
@@ -50,7 +59,21 @@ export default function App() {
       if (autoScan) {
         try {
           const state = JSON.parse(autoScan);
-          setAutoScanDone(state.status === "complete");
+          let hasQueueItems = false;
+          if (queueStateRaw) {
+            try {
+              const queueState = JSON.parse(queueStateRaw) as { items?: unknown[] };
+              hasQueueItems = Array.isArray(queueState.items) && queueState.items.length > 0;
+            } catch {
+              hasQueueItems = false;
+            }
+          }
+
+          setAutoScanDone(
+            state.status === "complete" &&
+            Number(state.totalCount || 0) > 0 &&
+            hasQueueItems
+          );
         } catch {
           setAutoScanDone(false);
         }
@@ -64,11 +87,29 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!user?.uid) {
+      setQueueReady(false);
+      return;
+    }
+
+    let active = true;
+    void persistentQueue.initialize(user.uid).then(() => {
+      if (active) {
+        setQueueReady(true);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.uid]);
+
   if (showSplash) {
     return <SplashScreen />;
   }
 
-  if (loading || bootLoading) {
+  if (loading || bootLoading || (Boolean(user) && !queueReady)) {
     return (
       <View style={styles.loader}>
         <ActivityIndicator color={colors.accent} />
@@ -78,7 +119,7 @@ export default function App() {
 
   if (!onboardingDone) {
     return (
-      <EnhancedOnboardingScreen
+      <SwipeableOnboardingScreen
         onComplete={async () => {
           await AsyncStorage.setItem(ONBOARDING_KEY, "1");
           setOnboardingDone(true);
@@ -105,7 +146,10 @@ export default function App() {
   if (!autoScanDone) {
     return (
       <AutoIndexingScreen
-        onComplete={async () => {
+        onComplete={async (files) => {
+          if (files.length > 0) {
+            persistentQueue.enqueue(files);
+          }
           setAutoScanDone(true);
         }}
       />

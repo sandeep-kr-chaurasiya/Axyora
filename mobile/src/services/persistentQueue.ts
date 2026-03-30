@@ -92,7 +92,11 @@ class PersistentQueue extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      console.debug("[Queue] Already running, skipping start");
+      return;
+    }
+    console.log(`[Queue] ▶️ Starting queue processing (${this.state.items.length} items, starting at index ${this.state.currentIndex})`);
     this.running = true;
     this.abortController = new AbortController();
 
@@ -110,6 +114,7 @@ class PersistentQueue extends EventEmitter {
         }
 
         const item = this.state.items[this.state.currentIndex];
+        console.log(`[Queue] Processing item ${this.state.currentIndex + 1}/${this.state.items.length}: ${item.file.name}`);
         await this.processItem(item);
         this.state.currentIndex++;
 
@@ -119,10 +124,11 @@ class PersistentQueue extends EventEmitter {
       }
 
       this.running = false;
+      console.log(`[Queue] ⏹️ Queue processing complete or aborted`);
       this.emit("idle");
       this.checkpoint();
     } catch (error) {
-      console.error("[PersistentQueue] Error during processing", error);
+      console.error("[Queue] 🚨 Error during processing", error instanceof Error ? error.message : error);
       this.running = false;
     }
   }
@@ -134,6 +140,7 @@ class PersistentQueue extends EventEmitter {
     try {
       item.status = "uploading";
       item.attemptedAt = Date.now();
+      console.log(`[Queue:ProcessItem] 📤 Uploading: ${item.file.name} (URI: ${item.file.uri.substring(0, 50)}...)`);
       this.emitProgress(item);
 
       const submitted = await submitFileForProcessing({
@@ -144,6 +151,7 @@ class PersistentQueue extends EventEmitter {
         modifiedAt: item.file.modifiedAt,
       });
 
+      console.log(`[Queue:ProcessItem] ✅ Uploaded successfully, jobId: ${submitted.jobId}`);
       item.jobId = submitted.jobId;
       item.status = "processing";
       this.emitProgress(item);

@@ -1,85 +1,45 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
-  Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  ScrollView,
+  Alert,
   Linking,
-  Switch,
-  ActivityIndicator,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
-import { auth, logout } from "../services/firebase";
-import { clearIndex, getIndexStats } from "../services/apiClient";
-import { persistentQueue } from "../services/persistentQueue";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const PERMISSIONS_KEY = "@axyora/permissions-granted";
-const ONBOARDING_KEY = "@axyora/onboarding-complete";
-const AUTO_SCAN_KEY = "@axyora_auto_scan_state";
+export function SettingsScreen(props: {
+  onReindex?: () => void;
+  onViewIndexing?: () => void;
+  onClearData?: () => void;
+  onLogout?: () => void;
+  onClose: () => void;
+}) {
+  const [clearing, setClearing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
-export function SettingsScreen() {
-  const navigation = useNavigation<any>();
-  const [user, setUser] = useState(auth.currentUser);
-  const [stats, setStats] = useState<any>(null);
-  const [isLoadingStats, setIsLoadingStats] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("llama3:8b");
-
-  const fetchStats = async () => {
-    setIsLoadingStats(true);
-    try {
-      const data = await getIndexStats();
-      setStats(data);
-    } catch (e) {
-      console.warn("Failed to fetch index stats", e);
-    } finally {
-      setIsLoadingStats(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const handleLogout = async () => {
-    Alert.alert("Logout", "Are you sure you want to sign out?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          // The App component should handle the navigation back to Auth screen automatically 
-          // via useAuth hook state change.
-        },
-      },
-    ]);
-  };
-
-  const handleClearMemory = async () => {
+  const handleClearData = () => {
     Alert.alert(
-      "Clear Index",
-      "This will remove all indexed vectors from the local AI engine. Your files will NOT be deleted from your device.",
+      "Clear All Data",
+      "This will delete all indexed files and memories. This action cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Clear Everything",
+          text: "Clear",
           style: "destructive",
           onPress: async () => {
-            setIsClearing(true);
+            setClearing(true);
             try {
-              await clearIndex();
-              await persistentQueue.clear();
-              setStats({ total_files: 0, total_vectors: 0, total_chunks: 0 });
-              Alert.alert("Success", "Memory index cleared.");
-            } catch (e) {
-              Alert.alert("Error", "Failed to clear index.");
+              await props.onClearData?.();
+              Alert.alert("Success", "All data cleared");
+            } catch (err) {
+              Alert.alert("Error", "Failed to clear data");
             } finally {
-              setIsClearing(false);
+              setClearing(false);
             }
           },
         },
@@ -87,32 +47,22 @@ export function SettingsScreen() {
     );
   };
 
-  const handleReindex = async () => {
+  const handleLogout = () => {
     Alert.alert(
-      "Re-index All Files",
-      "This will clear the current index and start a fresh scan of your device. Proceed?",
+      "Logout",
+      "Are you sure you want to logout? Your local data will remain secure.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Re-index",
+          text: "Logout",
+          style: "destructive",
           onPress: async () => {
-            setIsClearing(true);
+            setLoggingOut(true);
             try {
-              await clearIndex();
-              await persistentQueue.clear();
-              
-              // Clear scan markers to allow App.tsx/ProcessingScreen to re-trigger scan
-              await AsyncStorage.removeItem(AUTO_SCAN_KEY);
-              
-              // Navigate back to Processing screen to restart scan
-              navigation.reset({
-                index: 0,
-                routes: [{ name: "Processing" }],
-              });
-            } catch (e) {
-              Alert.alert("Error", "Failed to start re-indexing.");
-            } finally {
-              setIsClearing(false);
+              await props.onLogout?.();
+            } catch (err) {
+              Alert.alert("Error", "Failed to logout");
+              setLoggingOut(false);
             }
           },
         },
@@ -120,250 +70,280 @@ export function SettingsScreen() {
     );
   };
 
-  const openAppPermissions = () => {
-    Linking.openSettings();
+  const handlePrivacyPolicy = () => {
+    Linking.openURL("https://axyora.ai/privacy");
+  };
+
+  const handleTermsOfService = () => {
+    Linking.openURL("https://axyora.ai/terms");
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* User Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <View style={styles.card}>
-          <Text style={styles.emailText}>{user?.email}</Text>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Text style={styles.logoutText}>Sign Out</Text>
+    <SafeAreaView style={styles.safeContainer}>
+      <LinearGradient
+        colors={["#06070B", "#0D1428", "#071A25"]}
+        style={styles.container}
+      >
+        <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Settings</Text>
+          <TouchableOpacity onPress={props.onClose}>
+            <Text style={styles.closeButton}>✕</Text>
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Stats Section */}
-      <View style={styles.section}>
-        <View style={styles.headerRow}>
-          <Text style={styles.sectionTitle}>Memory Statistics</Text>
-          {isLoadingStats && <ActivityIndicator size="small" color={colors.accent} />}
-        </View>
-        <View style={styles.statsGrid}>
-          <View style={styles.statsCard}>
-            <Text style={styles.statsVal}>{stats?.total_files ?? 0}</Text>
-            <Text style={styles.statsLabel}>Files</Text>
-          </View>
-          <View style={styles.statsCard}>
-            <Text style={styles.statsVal}>{stats?.total_chunks ?? 0}</Text>
-            <Text style={styles.statsLabel}>Chunks</Text>
-          </View>
-          <View style={styles.statsCard}>
-            <Text style={styles.statsVal}>{stats?.total_vectors ?? 0}</Text>
-            <Text style={styles.statsLabel}>Vectors</Text>
-          </View>
-        </View>
-      </View>
+        {/* Indexing Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Data Management</Text>
 
-      {/* Model Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>AI Brain Configuration</Text>
-        <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <View>
-              <Text style={styles.settingLabel}>Active Model</Text>
-              <Text style={styles.settingSub}>Choose your local inference model</Text>
-            </View>
-            <TouchableOpacity style={styles.modelBtn} disabled>
-              <Text style={styles.modelBtnText}>{selectedModel}</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <TouchableOpacity 
-            style={styles.actionBtn} 
-            onPress={handleReindex}
-            disabled={isClearing}
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={props.onReindex}
           >
-            <Text style={styles.actionBtnText}>🔄 Trigger Fresh Neural Scan</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.actionBtn, { marginTop: 12 }]} 
-            onPress={handleClearMemory}
-            disabled={isClearing}
-          >
-            <Text style={[styles.actionBtnText, { color: colors.danger }]}>🗑️ Wipe Memory Index</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Permissions Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Security & Privacy</Text>
-        <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Local Encryption</Text>
-              <Text style={styles.settingSub}>Secure your vector database with device biometrics</Text>
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>🔄</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={styles.menuItemTitle}>Re-index Data</Text>
+                <Text style={styles.menuItemDesc}>Scan for new files</Text>
+              </View>
             </View>
-            <Switch value={true} trackColor={{ true: colors.accent, false: colors.border }} />
-          </View>
-          
-          <TouchableOpacity style={styles.outlineBtn} onPress={openAppPermissions}>
-            <Text style={styles.outlineBtnText}>Manage System Permissions</Text>
+            <Text style={styles.menuItemArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={props.onViewIndexing}
+          >
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>📊</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={styles.menuItemTitle}>Indexing Progress</Text>
+                <Text style={styles.menuItemDesc}>View processing status</Text>
+              </View>
+            </View>
+            <Text style={styles.menuItemArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemDanger]}
+            activeOpacity={0.7}
+            onPress={handleClearData}
+            disabled={clearing}
+          >
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>🗑️</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger]}>
+                  Clear All Data
+                </Text>
+                <Text style={styles.menuItemDesc}>Delete all memories</Text>
+              </View>
+            </View>
+            <Text style={styles.menuItemArrow}>›</Text>
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* About Section */}
-      <View style={styles.aboutSection}>
-        <Text style={styles.versionText}>Axyora Mobile Engine v1.0.4</Text>
-        <Text style={styles.privacyNote}>
-          Your data never leaves your device. All embeddings and search results are stored and processed locally.
-        </Text>
-      </View>
-    </ScrollView>
+        {/* Privacy Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Privacy & Legal</Text>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={handlePrivacyPolicy}
+          >
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>📋</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={styles.menuItemTitle}>Privacy Policy</Text>
+                <Text style={styles.menuItemDesc}>How we protect your data</Text>
+              </View>
+            </View>
+            <Text style={styles.menuItemArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={handleTermsOfService}
+          >
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>⚖️</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={styles.menuItemTitle}>Terms of Service</Text>
+                <Text style={styles.menuItemDesc}>User agreement</Text>
+              </View>
+            </View>
+            <Text style={styles.menuItemArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* About Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>About</Text>
+
+          <View style={styles.aboutItem}>
+            <Text style={styles.aboutTitle}>Axyora</Text>
+            <Text style={styles.aboutVersion}>v1.0.0</Text>
+          </View>
+
+          <Text style={styles.aboutDesc}>
+            Privacy-first AI memory engine. All data stays on your device.
+          </Text>
+        </View>
+
+        {/* Account Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account</Text>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemDanger]}
+            activeOpacity={0.7}
+            onPress={handleLogout}
+            disabled={loggingOut}
+          >
+            <View style={styles.menuItemLeft}>
+              <Text style={styles.menuItemIcon}>🚪</Text>
+              <View style={styles.menuItemContent}>
+                <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger]}>
+                  Logout
+                </Text>
+                <Text style={styles.menuItemDesc}>Exit your account</Text>
+              </View>
+            </View>
+            <Text style={styles.menuItemArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>© 2026 Axyora. All rights reserved.</Text>
+        </View>
+      </ScrollView>
+      </LinearGradient>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeContainer: {
+    flex: 1,
+    backgroundColor: "#06070B",
+  },
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
-  content: {
-    padding: 20,
-    paddingBottom: 60,
+  scroll: {
+    flex: 1,
+    paddingTop: 8,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  closeButton: {
+    fontSize: 22,
+    color: colors.accent,
   },
   section: {
-    marginBottom: 32,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    gap: 8,
   },
   sectionTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800",
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
     textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  card: {
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-  },
-  emailText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: "700",
+    letterSpacing: 0.5,
     marginBottom: 4,
   },
-  logoutBtn: {
-    alignSelf: "flex-start",
-    marginTop: 8,
-  },
-  logoutText: {
-    color: colors.danger,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  statsCard: {
-    flex: 1,
-    backgroundColor: colors.backgroundAlt,
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-  },
-  statsVal: {
-    color: colors.accent,
-    fontSize: 20,
-    fontWeight: "900",
-  },
-  statsLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  settingRow: {
+  menuItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
-  },
-  settingLabel: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  settingSub: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
-    maxWidth: "80%",
-  },
-  modelBtn: {
-    backgroundColor: "rgba(69, 224, 161, 0.1)",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(69, 224, 161, 0.3)",
-  },
-  modelBtnText: {
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  actionBtn: {
-    backgroundColor: "rgba(255,255,255,0.03)",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-  actionBtnText: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  outlineBtn: {
+    paddingHorizontal: 12,
     paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  menuItemDanger: {
+    backgroundColor: "rgba(239, 68, 68, 0.1)",
+  },
+  menuItemLeft: {
+    flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginTop: 10,
+    gap: 12,
+    flex: 1,
   },
-  outlineBtnText: {
-    color: colors.textMuted,
-    fontWeight: "700",
-    fontSize: 14,
+  menuItemIcon: {
+    fontSize: 18,
   },
-  aboutSection: {
-    alignItems: "center",
-    marginTop: 20,
+  menuItemContent: {
+    flex: 1,
   },
-  versionText: {
-    color: colors.textMuted,
-    fontSize: 12,
+  menuItemTitle: {
+    fontSize: 15,
     fontWeight: "600",
-    opacity: 0.5,
+    color: colors.text,
   },
-  privacyNote: {
+  menuItemTitleDanger: {
+    color: "#EF4444",
+  },
+  menuItemDesc: {
+    fontSize: 12,
     color: colors.textMuted,
+    marginTop: 2,
+  },
+  menuItemArrow: {
+    fontSize: 18,
+    color: colors.textMuted,
+  },
+  aboutItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 16,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 8,
+  },
+  aboutTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  aboutVersion: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  aboutDesc: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    lineHeight: 20,
+  },
+  footer: {
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+    alignItems: "center",
+  },
+  footerText: {
     fontSize: 11,
-    textAlign: "center",
-    marginTop: 10,
-    lineHeight: 16,
-    paddingHorizontal: 40,
-    opacity: 0.6,
+    color: colors.textMuted,
   },
 });

@@ -28,8 +28,15 @@
       "permissions": [
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_AUDIO",
-        "READ_EXTERNAL_STORAGE"
-      ]
+        "READ_MEDIA_VIDEO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "RECORD_AUDIO"
+      ],
+      "softwareKeyboardLayoutMode": "pan",
+      "usesCleartextTraffic": true
     },
     "plugins": [
       "expo-document-picker",

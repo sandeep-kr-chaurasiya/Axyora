@@ -1,21 +1,47 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Platform } from "react-native";
+import { ActivityIndicator, Alert, Linking, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-import { requestScanPermissions } from "../services/scannerService";
+import { requestAndroidStorageDirectoryAccess, requestScanPermissions } from "../services/scannerService";
 import { colors } from "../theme/colors";
 
 export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
   const [loading, setLoading] = useState(false);
   const [grantedPerms, setGrantedPerms] = useState({
     mediaGranted: false,
+    runtimeLimited: false,
+    storageGranted: false,
   });
 
   const request = async () => {
     setLoading(true);
     const perms = await requestScanPermissions();
-    setGrantedPerms(perms);
+    let storageGranted = false;
+
+    if (Platform.OS === "android") {
+      const storage = await requestAndroidStorageDirectoryAccess();
+      storageGranted = storage.granted;
+    }
+
+    setGrantedPerms({ ...perms, storageGranted });
+
+    if (Platform.OS === "android" && !perms.mediaGranted && !storageGranted && !perms.runtimeLimited) {
+      Alert.alert(
+        "Permission Needed",
+        "Android did not grant storage permissions. Please allow Photos/Media and Files access in App Settings.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Open Settings",
+            onPress: () => {
+              void Linking.openSettings();
+            },
+          },
+        ]
+      );
+    }
     
-    if (perms.mediaGranted) {
+    if (perms.mediaGranted || storageGranted || perms.runtimeLimited) {
       // Small delay to let user see the checkmark
       setTimeout(() => {
         props.onGranted();
@@ -67,7 +93,7 @@ export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
               <Text style={styles.permissionDetail}>Read PDFs, Word docs, text files</Text>
             </View>
           </View>
-          {grantedPerms.mediaGranted && <Text style={styles.checkmark}>✓</Text>}
+          {(grantedPerms.mediaGranted || grantedPerms.storageGranted) && <Text style={styles.checkmark}>✓</Text>}
         </View>
       </View>
 
@@ -89,7 +115,13 @@ export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
           <ActivityIndicator color="#072117" size="small" />
         ) : (
           <Text style={styles.buttonText}>
-            {grantedPerms.mediaGranted ? "✓ Permissions Granted" : "Grant Permissions"}
+            {grantedPerms.mediaGranted
+              ? "✓ Permissions Granted"
+              : grantedPerms.storageGranted
+              ? "✓ Storage Access Granted"
+              : grantedPerms.runtimeLimited
+              ? "Continue (Expo Go Limited)"
+              : "Grant Permissions"}
           </Text>
         )}
       </TouchableOpacity>

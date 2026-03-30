@@ -1,7 +1,13 @@
 import * as FileSystem from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { ScannableFile } from "./scannerService";
+import { Platform } from "react-native";
+import {
+  requestAndroidStorageDirectoryAccess,
+  requestScanPermissions,
+  scanAppDocumentDirectory,
+  type ScannableFile,
+} from "./scannerService";
 
 const AUTO_SCAN_KEY = "@axyora_auto_scan_state";
 const AUTO_SCAN_STATUS_KEY = "@axyora_auto_scan_status";
@@ -54,6 +60,33 @@ async function getMediaAssets(
   kind: "image" | "audio",
   onProgress?: (p: AutoScanProgress) => void
 ): Promise<ScannableFile[]> {
+  try {
+    let perms = await MediaLibrary.getPermissionsAsync(false, [
+      "photo",
+      "video",
+      "audio",
+    ]);
+    console.log(`[MediaLibrary] Initial ${kind} permissions check:`, perms);
+
+    if (!perms.granted) {
+      console.log(`[MediaLibrary] Requesting ${kind} permissions...`);
+      perms = await MediaLibrary.requestPermissionsAsync(false, [
+        "photo",
+        "video",
+        "audio",
+      ]);
+      console.log(`[MediaLibrary] Permission request result:`, perms);
+    }
+
+    if (!perms.granted) {
+      console.warn(`[MediaLibrary] ${kind} permissions not granted after request`);
+      return [];
+    }
+  } catch (err) {
+    console.error(`[MediaLibrary] Error requesting ${kind} permissions:`, err);
+    return [];
+  }
+
   const mediaType =
     kind === "image"
       ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
@@ -61,16 +94,29 @@ async function getMediaAssets(
 
   const items: ScannableFile[] = [];
   let totalFetched = 0;
+  let hasNextPage = true;
+  let endCursor: string | undefined;
 
   try {
-    // Try to get all assets in one call (simplified approach)
-    const page = await MediaLibrary.getAssetsAsync({
-      mediaType,
-      first: 1000, // Request up to 1000 assets at once
-      sortBy: [[MediaLibrary.SortBy.modificationTime, false]],
-    });
+    console.log(`[MediaLibrary] Starting ${kind} asset scan with mediaType:`, mediaType);
+    // Paginate through ALL assets (handle 800+ images)
+    while (hasNextPage) {
+      console.log(`[MediaLibrary] Fetching ${kind} page (cursor: ${endCursor || 'initial'})...`);
+      const page = await MediaLibrary.getAssetsAsync({
+        mediaType,
+        first: 100, // Get 100 at a time for stability
+        after: endCursor,
+        sortBy: [[MediaLibrary.SortBy.modificationTime, false]],
+      });
+      console.log(`[MediaLibrary] Page result: ${page.assets?.length || 0} assets, hasNextPage=${page.hasNextPage}, totalCount=${page.totalCount}`);
 
-    if (page.assets && page.assets.length > 0) {
+      if (!page.assets || page.assets.length === 0) {
+        console.log(`[MediaLibrary] No assets in page, stopping scan`);
+        hasNextPage = false;
+        break;
+      }
+      console.log(`[MediaLibrary] Processing ${page.assets.length} ${kind} assets...`);
+
       for (let i = 0; i < page.assets.length; i++) {
         const asset = page.assets[i];
         try {
@@ -99,8 +145,8 @@ async function getMediaAssets(
 
           totalFetched++;
 
-          // Report progress every 20 files
-          if (totalFetched % 20 === 0 && onProgress) {
+          // Report progress every 50 files
+          if (totalFetched % 50 === 0 && onProgress) {
             onProgress({
               phase: kind === "image" ? "images" : "audio",
               current: totalFetched,
@@ -113,6 +159,10 @@ async function getMediaAssets(
           continue;
         }
       }
+
+      // Check if there are more pages
+      endCursor = page.endCursor;
+      hasNextPage = page.hasNextPage || false;
     }
 
     // Report final count
@@ -124,8 +174,10 @@ async function getMediaAssets(
         status: "scanning",
       });
     }
+
+    console.log(`[AutoScan] ✅ Found ${totalFetched} ${kind}s total`);
   } catch (err) {
-    console.warn(`Error scanning ${kind} assets:`, err);
+    console.error(`[AutoScan] ❌ Error scanning ${kind} assets:`, err instanceof Error ? err.message : err);
     // Continue gracefully instead of failing
   }
 
@@ -133,95 +185,109 @@ async function getMediaAssets(
 }
 
 async function scanDocuments(): Promise<ScannableFile[]> {
-  const items: ScannableFile[] = [];
-  
-  // Scan Documents directory
-  const docsDir = FileSystem.documentDirectory;
-  if (docsDir) {
-    try {
-      const files = await FileSystem.readDirectoryAsync(docsDir);
-      const supportedExts = ["pdf", "doc", "docx", "txt"];
-
-      for (const file of files) {
-        const ext = file.split(".").pop()?.toLowerCase();
-        if (!supportedExts.includes(ext || "")) continue;
-
-        const fileUri = docsDir + file;
-        const fileInfo = await FileSystem.getInfoAsync(fileUri);
-
-        if (!fileInfo.exists || fileInfo.isDirectory) continue;
-
-        const mimeType = ext === "pdf" ? "application/pdf" : "text/plain";
-
-        items.push({
-          id: `doc_${file}`,
-          uri: fileUri,
-          name: file,
-          mimeType,
-          type: "document",
-          size: fileInfo.size || 0,
-          modifiedAt: fileInfo.modificationTime ? fileInfo.modificationTime * 1000 : Date.now(),
-          location: fileUri,
-          fingerprint: `${fileUri}::${fileInfo.size}::${fileInfo.modificationTime || Date.now()}`,
-        });
-      }
-    } catch (e) {
-      console.warn("Failed to scan documents directory", e);
-    }
-  }
-
-  return items;
+  return scanAppDocumentDirectory(300);
 }
 
 export async function runAutoScan(
   onProgress?: (p: AutoScanProgress) => void,
   onComplete?: (files: ScannableFile[]) => void
 ): Promise<ScannableFile[]> {
+  console.log("\n\n========== [AutoScan] STARTING AUTO-SCAN ==========");
   const allFiles: ScannableFile[] = [];
+  let mediaAllowed = true;
+  let safAccess = false;
 
   try {
-    // Phase 1: Images
-    await updateAutoScanState({ status: "scanning", phase: "images" });
-    try {
-      const images = await getMediaAssets("image", onProgress);
-      allFiles.push(...images);
+    // Request SAF directory access FIRST and wait for result
+    if (Platform.OS === "android") {
+      console.log("[AutoScan] 📁 Requesting Android Storage Access Framework...");
+      const safResult = await requestAndroidStorageDirectoryAccess();
+      safAccess = safResult.granted;
+      console.log(`[AutoScan] 📁 SAF access result: ${safAccess ? '✅ granted' : '❌ denied'}`);
+    }
 
+    // Request permissions BEFORE starting scans
+    console.log("[AutoScan] 🔐 Requesting media permissions...");
+    try {
+      const perms = await requestScanPermissions();
+      mediaAllowed = perms.mediaGranted;
+      console.log(`[AutoScan] 🔐 Media permissions: ${mediaAllowed ? '✅ granted' : '❌ denied'}`);
+    } catch (permErr) {
+      console.warn("[AutoScan] 🔐 Permission request failed:", permErr);
+      mediaAllowed = false;
+    }
+
+    // Phase 1: Images from MediaLibrary
+    console.log("\n[AutoScan] 📸 Phase 1: Starting image scan...");
+    await updateAutoScanState({ status: "scanning", phase: "images" });
+    if (mediaAllowed) {
+      try {
+        const images = await getMediaAssets("image", onProgress);
+        console.log(`[AutoScan] 📸 Found ${images.length} images`);
+        allFiles.push(...images);
+
+        if (onProgress) {
+          onProgress({
+            phase: "images",
+            current: images.length,
+            total: images.length,
+            status: "indexing",
+          });
+        }
+      } catch (imgErr) {
+        console.error("[AutoScan] 📸 Image scanning failed:", imgErr instanceof Error ? imgErr.message : imgErr);
+      }
+    } else {
+      console.warn("[AutoScan] 📸 Media permissions not granted, skipping MediaLibrary images");
       if (onProgress) {
         onProgress({
           phase: "images",
-          current: images.length,
-          total: images.length,
+          current: 0,
+          total: 0,
           status: "indexing",
         });
       }
-    } catch (imgErr) {
-      console.warn("Image scanning failed, continuing:", imgErr);
-      // Continue to next phase on error
     }
 
-    // Phase 2: Audio
+    // Phase 2: Audio from MediaLibrary
+    console.log("\n[AutoScan] 🎵 Phase 2: Starting audio scan...");
     await updateAutoScanState({ status: "scanning", phase: "audio" });
-    try {
-      const audio = await getMediaAssets("audio", onProgress);
-      allFiles.push(...audio);
+    if (mediaAllowed) {
+      try {
+        const audio = await getMediaAssets("audio", onProgress);
+        console.log(`[AutoScan] 🎵 Found ${audio.length} audio files`);
+        allFiles.push(...audio);
 
+        if (onProgress) {
+          onProgress({
+            phase: "audio",
+            current: audio.length,
+            total: audio.length,
+            status: "indexing",
+          });
+        }
+      } catch (audioErr) {
+        console.error("[AutoScan] 🎵 Audio scanning failed:", audioErr instanceof Error ? audioErr.message : audioErr);
+      }
+    } else {
+      console.warn("[AutoScan] 🎵 Media permissions not granted, skipping MediaLibrary audio");
       if (onProgress) {
         onProgress({
           phase: "audio",
-          current: audio.length,
-          total: audio.length,
+          current: 0,
+          total: 0,
           status: "indexing",
         });
       }
-    } catch (audioErr) {
-      console.warn("Audio scanning failed, continuing:", audioErr);
-      // Continue to next phase on error
     }
 
-    // Phase 3: Documents
+    // Phase 3: Documents (comprehensive file scan including public folders + SAF)
+    console.log("\n[AutoScan] 📄 Phase 3: Starting document & comprehensive file scan...");
     await updateAutoScanState({ status: "scanning", phase: "documents" });
     try {
+      // Scan with increased file limit (300) to capture as much as possible
       const docs = await scanDocuments();
+      console.log(`[AutoScan] 📄 Found ${docs.length} documents/files`);
       allFiles.push(...docs);
 
       if (onProgress) {
@@ -233,11 +299,12 @@ export async function runAutoScan(
         });
       }
     } catch (docErr) {
-      console.warn("Document scanning failed, continuing:", docErr);
-      // Continue even if document scanning fails
+      console.warn("[AutoScan] Document scanning failed, continuing:", docErr);
     }
 
     // Complete
+    const totalCount = allFiles.length;
+    console.log(`[AutoScan] Complete! Found ${totalCount} total files to index`);
     await updateAutoScanState({
       status: "complete",
       phase: "complete",

@@ -13,8 +13,9 @@ class ContextBuilder:
     Handles partitioning, ranking, and deduplication of source materials.
     """
 
-    def __init__(self, max_chars: int = 12000): # ~3k tokens (conservative for 8k window)
+    def __init__(self, max_chars: int = 12000, max_chunks: int = 5):  # ~3k tokens (conservative for 8k window)
         self.max_chars = max_chars
+        self.max_chunks = max_chunks  # Limit to 3-5 chunks per spec
 
     def build_context(self, retrieved_chunks: List[Dict[str, Any]]) -> str:
         """
@@ -38,8 +39,11 @@ class ContextBuilder:
 
         # 2. Re-ranking (Sort by higher score = better match)
         unique_chunks.sort(key=lambda x: x.get("score", 0), reverse=True)
+        
+        # 3. Limit to max_chunks for efficiency (typically 3-5 per spec)
+        unique_chunks = unique_chunks[:self.max_chunks]
 
-        # 3. Assemble context with clear headers for source identification
+        # 4. Assemble context with clear headers for source identification
         context_parts = []
         current_len = 0
         
@@ -53,7 +57,7 @@ class ContextBuilder:
             snippet_formatted = f"\n{text_snippet}\n"
             full_segment = f"{source_header}{snippet_formatted}\n---\n"
             
-            # 4. Check length constraints
+            # 5. Check length constraints
             if current_len + len(full_segment) > self.max_chars:
                 # If we're at the very first chunk and it's HUGE, truncate it
                 if not context_parts:
@@ -108,8 +112,8 @@ class ContextBuilder:
     @staticmethod
     def extract_image_sources(retrieved_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Extract image sources specifically.
-        Returns metadata optimized for image display in UI.
+        Extract image sources specifically with improved caption handling.
+        Returns metadata optimized for image display in UI with full caption support.
         """
         seen_images = set()
         image_sources = []
@@ -120,18 +124,30 @@ class ContextBuilder:
 
             fid = chunk.get("local_path") or chunk.get("file_name", "")
             if fid and fid not in seen_images:
-                image_sources.append(
-                    {
-                        "file_name": chunk.get("file_name", "Unknown Image"),
-                        "file_path": chunk.get("local_path", "Local Machine"),
-                        "caption": chunk.get("text", ""),
-                        "preview": chunk.get("text", "")[:200].strip(),
-                        "image_uri": chunk.get("local_path"),
-                        "thumbnail_path": chunk.get("local_path"),
-                        "score": chunk.get("score", 0),
-                        "type": "image",
-                    }
-                )
+                # Use primary_caption if available (from enhanced captiot), fall back to main caption
+                full_caption = chunk.get("primary_caption") or chunk.get("text", "")
+                secondary_caption = chunk.get("secondary_caption", "")
+                
+                # Include both captions in preview for richer context
+                preview = full_caption[:150].strip()
+                if secondary_caption:
+                    preview = f"{preview} | {secondary_caption[:100]}"
+                
+                image_entry = {
+                    "file_name": chunk.get("file_name", "Unknown Image"),
+                    "file_path": chunk.get("local_path", "Local Machine"),
+                    "caption": full_caption,
+                    "primary_caption": full_caption,
+                    "secondary_caption": secondary_caption,
+                    "preview": preview,
+                    "image_uri": chunk.get("local_path"),
+                    "thumbnail_path": chunk.get("local_path"),
+                    "tags": chunk.get("tags", []),  # Include tags for filtering
+                    "score": chunk.get("score", 0),
+                    "type": "image",
+                }
+                
+                image_sources.append(image_entry)
                 seen_images.add(fid)
 
         return image_sources

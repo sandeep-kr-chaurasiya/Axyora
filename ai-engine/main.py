@@ -22,7 +22,7 @@ except Exception:
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from processor import detect_file_type, process_file_bytes
 from metadata_db import JobStore
@@ -44,7 +44,8 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     model: str = Field(default="llama-3.3-70b-versatile")
     
-    @validator("query")
+    @field_validator("query")
+    @classmethod
     def query_not_empty(cls, v):
         if not v.strip():
             raise ValueError("Query cannot be empty")
@@ -52,7 +53,7 @@ class QueryRequest(BaseModel):
 
 class AskRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    context: List[str] = Field(..., min_items=1)
+    context: List[str] = Field(..., min_length=1)
 
 class ScanRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
@@ -278,11 +279,24 @@ async def process_file(
     file_path: str = Form(None),
     modified_at: float = Form(None)
 ):
+    # Validate inputs
+    if not user_id or len(user_id) > 100:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    if not job_id or len(job_id) > 200:
+        raise HTTPException(status_code=400, detail="Invalid job_id")
+    if not file.filename or len(file.filename) > 500:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
     content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
     if len(content) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="File too large")
     
     file_type = detect_file_type(file.filename, content)
+    if file_type == "unknown":
+        raise HTTPException(status_code=415, detail="Unsupported file type")
+    
     job = job_store.create_job(job_id, user_id, file.filename, file_type)
     await _job_queue.put({
         "job_id": job_id, "file_bytes": content, "file_name": file.filename,
@@ -307,11 +321,19 @@ async def ask_standalone(req: AskRequest):
 @app.post("/query")
 async def query(req: QueryRequest):
     """Query indexed documents with cloud Groq reasoning."""
+    # Validate user_id to prevent unauthorized access
+    if not req.user_id or len(req.user_id) > 100:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    
     try:
         start = time.time()
-        logger.info(f"[Query] Groq request: {req.query[:40]}...")
+        logger.info(f"[Query] Groq request: {req.query[:40]}... (user={req.user_id[:20]})")
+        
+        # Limit top_k to reasonable range (3-20)
+        effective_top_k = max(1, min(req.top_k, 20))
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None, get_query_engine().answer, req.query, req.user_id, req.top_k, req.model
+            None, get_query_engine().answer, req.query, req.user_id, effective_top_k, req.model
         )
         return {**result, "duration_ms": int((time.time() - start) * 1000)}
     except Exception as e:
@@ -321,11 +343,19 @@ async def query(req: QueryRequest):
 @app.post("/search-images")
 async def search_images(req: QueryRequest):
     """Search for images based on natural language query."""
+    # Validate user_id
+    if not req.user_id or len(req.user_id) > 100:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    
     try:
         start = time.time()
-        logger.info(f"[ImageSearch] Request: {req.query[:40]}...")
+        logger.info(f"[ImageSearch] Request: {req.query[:40]}... (user={req.user_id[:20]})")
+        
+        # Limit top_k to reasonable range (3-20)
+        effective_top_k = max(1, min(req.top_k, 20))
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None, get_query_engine().search_images, req.query, req.user_id, req.top_k
+            None, get_query_engine().search_images, req.query, req.user_id, effective_top_k
         )
         return {**result, "duration_ms": int((time.time() - start) * 1000)}
     except Exception as e:
@@ -337,6 +367,30 @@ async def job_status(job_id: str):
     job = job_store.get_job(job_id)
     if not job: raise HTTPException(status_code=404)
     return job
+
+@app.get("/stats/file-types/{user_id}")
+async def get_file_type_stats(user_id: str):
+    """Get statistics of processed files by type"""
+    jobs = job_store.get_user_jobs(user_id, limit=500)
+    stats = {"image": 0, "audio": 0, "video": 0, "document": 0, "text": 0, "total": 0}
+    
+    for job in jobs:
+        file_type = job.get("file_type", "unknown")
+        if job.get("status") in ["done", "processing", "uploading"]:
+            # Map internal file types to display categories
+            if file_type == "image":
+                stats["image"] += 1
+            elif file_type == "audio":
+                stats["audio"] += 1
+            elif file_type in ["pdf", "docx", "doc"]:
+                stats["document"] += 1
+            elif file_type == "txt":
+                stats["text"] += 1
+            elif file_type != "unknown":
+                stats["text"] += 1
+            stats["total"] += 1
+    
+    return stats
 
 @app.get("/jobs")
 async def list_jobs(user_id: str, limit: int = 50):

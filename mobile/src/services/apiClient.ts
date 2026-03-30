@@ -1,5 +1,6 @@
 import { auth } from "./firebase";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 
 // API timeout constants (ms)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -75,14 +76,50 @@ class NetworkError extends Error {
   }
 }
 
-// Support for local development on different platforms
-const getLocalBaseUrl = () => {
-  if (process.env.EXPO_PUBLIC_API_BASE_URL) return process.env.EXPO_PUBLIC_API_BASE_URL;
-  if (Platform.OS === "android") return "http://10.0.2.2:8000"; // Android emulator host
-  return "http://127.0.0.1:8000"; // iOS simulator / default
-};
+function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
 
-let API_BASE_URL = getLocalBaseUrl();
+function extractExpoHost(): string | null {
+  const candidates = [
+    (Constants as any)?.expoConfig?.hostUri,
+    (Constants as any)?.expoGoConfig?.debuggerHost,
+    (Constants as any)?.manifest?.debuggerHost,
+    (Constants as any)?.manifest2?.extra?.expoGo?.debuggerHost,
+  ];
+
+  for (const raw of candidates) {
+    if (typeof raw !== "string" || raw.length === 0) continue;
+    const host = raw.split(":")[0]?.trim();
+    if (host) return host;
+  }
+
+  return null;
+}
+
+function getCandidateBaseUrls(): string[] {
+  const urls = new Set<string>();
+
+  if (process.env.EXPO_PUBLIC_API_BASE_URL) {
+    urls.add(normalizeBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL));
+  }
+
+  const expoHost = extractExpoHost();
+  if (expoHost) {
+    urls.add(`http://${expoHost}:8000`);
+  }
+
+  if (Platform.OS === "android") {
+    urls.add("http://10.0.2.2:8000");
+  }
+
+  urls.add("http://127.0.0.1:8000");
+  urls.add("http://localhost:8000");
+
+  return Array.from(urls);
+}
+
+let API_BASE_URL = getCandidateBaseUrls()[0] || "http://127.0.0.1:8000";
 
 function requireUserId(): string {
   const uid = auth.currentUser?.uid;
@@ -149,33 +186,54 @@ async function authedFetch(
   timeoutMs: number = DEFAULT_TIMEOUT
 ): Promise<Response> {
   const headers = await authHeaders(init?.headers);
-  const url = `${API_BASE_URL}${path}`;
+  const candidates = getCandidateBaseUrls();
+  const prioritized = [API_BASE_URL, ...candidates.filter((url) => url !== API_BASE_URL)];
+  console.log(`[API] 🌐 Attempting ${path} on candidates:`, prioritized);
+  let lastNetworkErr: NetworkError | null = null;
 
-  try {
-    const res = await fetchWithTimeout(url, { ...init, headers }, timeoutMs);
-    return res;
-  } catch (error) {
-    const networkErr = classifyNetworkError(error);
+  for (const baseUrl of prioritized) {
+    const url = `${baseUrl}${path}`;
+    try {
+      console.log(`[API] 🔄 Trying ${url}...`);
+      const res = await fetchWithTimeout(url, { ...init, headers }, timeoutMs);
+      console.log(`[API] ✅ Success on ${baseUrl}, status=${res.status}`);
+      API_BASE_URL = baseUrl;
+      return res;
+    } catch (error) {
+      console.warn(`[API] ⚠️ Failed on ${baseUrl}:`, error instanceof Error ? error.message : error);
+      const networkErr = classifyNetworkError(error);
+      lastNetworkErr = networkErr;
 
-    if (API_BASE_URL.includes("127.0.0.1") || API_BASE_URL.includes("localhost")) {
-      throw new NetworkError(
-        networkErr.code,
-        networkErr.retriable,
-        `Cannot reach local AI engine at ${API_BASE_URL}\n\n` +
-          `FIX:\n` +
-          `1. Open a terminal and run:\n` +
-          `   cd ~/Desktop/Axyora/ai-engine\n` +
-          `   source .venv/bin/activate\n` +
-          `   uvicorn main:app --host 127.0.0.1 --port 8000\n\n` +
-          `2. Wait for "Application startup complete" message\n\n` +
-          `3. Refresh this app\n\n` +
-          `If on physical device, set EXPO_PUBLIC_API_BASE_URL in .env to your laptop IP.\n` +
-          `(${networkErr.message})`
-      );
+      if (!networkErr.retriable) {
+        throw networkErr;
+      }
     }
-
-    throw networkErr;
   }
+
+  const tried = prioritized.join(", ");
+  console.error(`[API] 🚨 Could not reach backend after trying: ${tried}`);
+  throw new NetworkError(
+    lastNetworkErr?.code || "NETWORK_ERROR",
+    true,
+    `Cannot reach AI engine. Tried: ${tried}\n\n` +
+      `FIX:\n` +
+      `1. Start backend:\n` +
+      `   cd ~/Desktop/Axyora/ai-engine\n` +
+      `   source .venv/bin/activate\n` +
+      `   uvicorn main:app --host 0.0.0.0 --port 8000\n\n` +
+      `2. Ensure phone and laptop are on same Wi-Fi\n` +
+      `3. Optional: set EXPO_PUBLIC_API_BASE_URL in mobile/.env (e.g. http://192.168.x.x:8000)\n\n` +
+      `(${lastNetworkErr?.message || "Connection failed"})`
+  );
+}
+
+export function getResolvedApiBaseUrl(): string {
+  return API_BASE_URL;
+}
+
+export async function checkEngineHealth(): Promise<boolean> {
+  const res = await authedFetch("/health", undefined, 8000);
+  return res.ok;
 }
 
 /**
@@ -191,6 +249,7 @@ async function makeRequest<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await method();
+      console.log(`[API:makeRequest] Response status: ${res.status} (attempt ${attempt + 1}/${maxRetries + 1})`);
 
       if (!res.ok) {
         const errorText = await res.text();
@@ -244,6 +303,7 @@ export async function submitFileForProcessing(params: {
 }): Promise<ProcessingJob> {
   const userId = requireUserId();
   const resolvedJobId = params.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  console.log(`[API:submitFile] 📝 Preparing file: ${params.fileName} (jobId: ${resolvedJobId}, mimeType: ${params.mimeType})`);
 
   const form = new FormData();
   const fileBlob = {
@@ -265,6 +325,7 @@ export async function submitFileForProcessing(params: {
     () => authedFetch("/process-file", { method: "POST", body: form }, UPLOAD_TIMEOUT),
     1 // Only 1 retry for uploads
   );
+  console.log(`[API:submitFile] ✅ File submission successful, got jobId: ${data.job_id}`);
 
   return {
     jobId: data.job_id,
@@ -290,6 +351,22 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
   };
 }
 
+export interface FileTypeStats {
+  image: number;
+  audio: number;
+  video: number;
+  document: number;
+  text: number;
+  total: number;
+}
+
+export async function getFileTypeStats(userId: string): Promise<FileTypeStats> {
+  return makeRequest<FileTypeStats>(
+    () => authedFetch(`/stats/file-types/${encodeURIComponent(userId)}`, undefined, DEFAULT_TIMEOUT),
+    2
+  );
+}
+
 export async function queryMemory(payload: {
   query: string;
   model?: string;
@@ -298,7 +375,12 @@ export async function queryMemory(payload: {
   const userId = requireUserId();
   const modelToUse = payload.model || "llama3:8b";
 
-  return makeRequest<QueryResponse>(
+  console.log(`[API] Query request: "${payload.query}"`);
+  console.log(`[API] User ID: ${userId}`);
+  console.log(`[API] Model: ${modelToUse}`);
+  console.log(`[API] Top K: ${payload.topK ?? 5}`);
+
+  const response = await makeRequest<QueryResponse>(
     () =>
       authedFetch(
         "/query",
@@ -316,6 +398,23 @@ export async function queryMemory(payload: {
       ),
     2
   );
+
+  console.log(`[API] Query response received`);
+  console.log(`[API] Answer length: ${response.answer?.length || 0} chars`);
+  console.log(`[API] Number of sources: ${response.sources?.length || 0}`);
+  console.log(`[API] Number of images: ${response.images?.length || 0}`);
+  
+  if (response.images && response.images.length > 0) {
+    console.log(`[API] Images in response:`);
+    response.images.forEach((img, idx) => {
+      console.log(`  [${idx}] file_name: ${img.file_name}`);
+      console.log(`  [${idx}] file_path: ${img.file_path}`);
+      console.log(`  [${idx}] image_uri: ${img.image_uri}`);
+      console.log(`  [${idx}] score: ${img.score}`);
+    });
+  }
+
+  return response;
 }
 
 export async function getIndexStats() {

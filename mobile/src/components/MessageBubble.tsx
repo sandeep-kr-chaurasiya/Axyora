@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, StyleSheet, Text, View, Image } from "react-native";
 
 import { colors } from "../theme/colors";
 
@@ -24,8 +24,19 @@ export function MessageBubble(props: { role: "user" | "assistant"; text: string 
         { opacity: alpha, transform: [{ translateY: y }] },
       ]}
     >
-      <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-        <Text style={styles.text}>{props.text}</Text>
+      <View style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}>
+        {/* Axyora Logo for Assistant */}
+        {!isUser && (
+          <Image 
+            source={require("../../Axyora transparent .png")}
+            style={styles.logoImage} 
+            resizeMode="contain"
+          />
+        )}
+        
+        <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+          <Text style={styles.text}>{props.text}</Text>
+        </View>
       </View>
     </Animated.View>
   );
@@ -35,6 +46,28 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 10,
     width: "100%",
+    // Ensure proper scoping of animation transforms
+    overflow: "hidden",
+  },
+  messageRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  userRow: {
+    justifyContent: "flex-end",
+  },
+  assistantRow: {
+    justifyContent: "flex-start",
+  },
+  logoImage: {
+    width: 24,
+    height: 24,
+    marginBottom: 4,
+  },
+  logo: {
+    fontSize: 20,
+    marginBottom: 4,
   },
   userContainer: {
     alignItems: "flex-end",

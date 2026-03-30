@@ -6,16 +6,17 @@ import {
   Text,
   TouchableOpacity,
   View,
-  SafeAreaView,
   RefreshControl,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 
 import { persistentQueue, type QueueItem } from "../services/persistentQueue";
 import { pickDocuments, scanDeviceFiles, type ScanProgress } from "../services/scannerService";
 import { colors } from "../theme/colors";
-import { getIndexStats } from "../services/apiClient";
+import { checkEngineHealth, getResolvedApiBaseUrl, getFileTypeStats, type FileTypeStats } from "../services/apiClient";
+import { useAuth } from "../hooks/useAuth";
 
 const statusColors: Record<string, string> = {
   pending: "#6B7280",
@@ -28,11 +29,14 @@ const statusColors: Record<string, string> = {
 
 export function ProcessingScreen(props: { onDone: () => void }) {
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
   const [history, setHistory] = useState<QueueItem[]>([]);
   const [stats, setStats] = useState(persistentQueue.getStats());
   const [isScanning, setIsScanning] = useState(false);
   const [localScanProgress, setLocalScanProgress] = useState<ScanProgress | null>(null);
   const [engineStatus, setEngineStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [engineBaseUrl, setEngineBaseUrl] = useState(getResolvedApiBaseUrl());
+  const [fileTypeStats, setFileTypeStats] = useState<FileTypeStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const hasAutoStarted = useRef(false);
 
@@ -44,31 +48,49 @@ export function ProcessingScreen(props: { onDone: () => void }) {
 
   const checkEngine = useCallback(async () => {
     try {
-      await getIndexStats();
-      setEngineStatus("online");
-    } catch (e) {
+      const ok = await checkEngineHealth();
+      setEngineStatus(ok ? "online" : "offline");
+    } catch {
       setEngineStatus("offline");
+    } finally {
+      setEngineBaseUrl(getResolvedApiBaseUrl());
     }
   }, []);
+
+  const loadFileTypeStats = useCallback(async () => {
+    if (!user?.uid) return;
+    try {
+      const stats = await getFileTypeStats(user.uid);
+      setFileTypeStats(stats);
+    } catch (error) {
+      console.warn("[Processing] Failed to load file type stats", error);
+    }
+  }, [user?.uid]);
 
   useEffect(() => {
     sync();
     checkEngine();
+    loadFileTypeStats();
 
-    const onProgress = () => sync();
+    const onProgress = () => {
+      sync();
+      loadFileTypeStats();
+    };
     const onCleared = () => sync();
 
     persistentQueue.on("progress", onProgress);
     persistentQueue.on("cleared", onCleared);
     
     const healthTimer = setInterval(checkEngine, 8000);
+    const statsTimer = setInterval(loadFileTypeStats, 5000);
 
     return () => {
       persistentQueue.off("progress", onProgress);
       persistentQueue.off("cleared", onCleared);
       clearInterval(healthTimer);
+      clearInterval(statsTimer);
     };
-  }, [sync, checkEngine]);
+  }, [sync, checkEngine, loadFileTypeStats]);
 
   // 2. Auto-Scan on mount if empty
   useEffect(() => {
@@ -113,7 +135,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([sync(), checkEngine()]);
+    await Promise.all([sync(), checkEngine(), loadFileTypeStats()]);
     setRefreshing(false);
   };
 
@@ -133,6 +155,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
             <View style={[styles.statusDot, { backgroundColor: engineStatus === "online" ? colors.accent : engineStatus === "checking" ? colors.warning : colors.danger }]} />
             <Text style={styles.engineText}>AI Engine: {engineStatus.toUpperCase()}</Text>
           </View>
+          <Text style={styles.engineHint}>Endpoint: {engineBaseUrl}</Text>
         </View>
 
         <View style={styles.statsCard}>
@@ -163,6 +186,44 @@ export function ProcessingScreen(props: { onDone: () => void }) {
             </View>
           </View>
         </View>
+
+        {fileTypeStats && fileTypeStats.total > 0 && (
+          <View style={styles.fileTypeCard}>
+            <Text style={styles.fileTypeTitle}>📊 Files by Type</Text>
+            <View style={styles.fileTypeGrid}>
+              {fileTypeStats.image > 0 && (
+                <View style={styles.fileTypeItem}>
+                  <Text style={styles.fileTypeCount}>{fileTypeStats.image}</Text>
+                  <Text style={styles.fileTypeLabel}>📸 Images</Text>
+                </View>
+              )}
+              {fileTypeStats.audio > 0 && (
+                <View style={styles.fileTypeItem}>
+                  <Text style={styles.fileTypeCount}>{fileTypeStats.audio}</Text>
+                  <Text style={styles.fileTypeLabel}>🎵 Audio</Text>
+                </View>
+              )}
+              {fileTypeStats.video > 0 && (
+                <View style={styles.fileTypeItem}>
+                  <Text style={styles.fileTypeCount}>{fileTypeStats.video}</Text>
+                  <Text style={styles.fileTypeLabel}>🎬 Videos</Text>
+                </View>
+              )}
+              {fileTypeStats.document > 0 && (
+                <View style={styles.fileTypeItem}>
+                  <Text style={styles.fileTypeCount}>{fileTypeStats.document}</Text>
+                  <Text style={styles.fileTypeLabel}>📄 Docs</Text>
+                </View>
+              )}
+              {fileTypeStats.text > 0 && (
+                <View style={styles.fileTypeItem}>
+                  <Text style={styles.fileTypeCount}>{fileTypeStats.text}</Text>
+                  <Text style={styles.fileTypeLabel}>📝 Text</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
 
         <View style={styles.actionRow}>
           <TouchableOpacity 
@@ -264,6 +325,7 @@ const styles = StyleSheet.create({
   engineRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
   statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   engineText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+  engineHint: { color: colors.textMuted, fontSize: 11, marginTop: 6 },
   statsCard: { backgroundColor: colors.card, padding: 20, borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
   statsHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 },
   statsTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
@@ -310,4 +372,10 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.text, fontWeight: "700" },
   launchBtn: { backgroundColor: colors.accent, paddingVertical: 18, borderRadius: 16, alignItems: "center", marginTop: 10, shadowColor: colors.accent, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 15, elevation: 10 },
   launchText: { color: "#000", fontWeight: "900", fontSize: 16 },
+  fileTypeCard: { backgroundColor: colors.card, padding: 20, borderRadius: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.05)", marginBottom: 24 },
+  fileTypeTitle: { color: colors.text, fontSize: 14, fontWeight: "800", marginBottom: 16, textTransform: "uppercase", letterSpacing: 0.5 },
+  fileTypeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  fileTypeItem: { flex: 1, minWidth: "22%", backgroundColor: "rgba(255,255,255,0.05)", paddingVertical: 14, paddingHorizontal: 10, borderRadius: 12, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  fileTypeCount: { color: colors.accent, fontSize: 18, fontWeight: "900", marginBottom: 4 },
+  fileTypeLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "600", textAlign: "center" },
 });

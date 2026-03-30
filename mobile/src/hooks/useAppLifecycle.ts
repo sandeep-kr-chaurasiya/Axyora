@@ -36,8 +36,30 @@ export async function requestOnInstallPermissions(): Promise<PermissionState> {
   };
 
   try {
-    // Media Library (images/audio)
-    const mediaResult = await MediaLibrary.requestPermissionsAsync(false);
+    // Try to request full media scope first; if unavailable, fall back gracefully.
+    let mediaResult:
+      | {
+          granted?: boolean;
+          accessPrivileges?: string;
+        }
+      | undefined;
+    try {
+      mediaResult = await MediaLibrary.requestPermissionsAsync(false, [
+        "photo",
+        "video",
+        "audio",
+      ]);
+    } catch {
+      try {
+        mediaResult = await MediaLibrary.getPermissionsAsync(false, [
+          "photo",
+          "video",
+          "audio",
+        ]);
+      } catch {
+        mediaResult = { granted: false, accessPrivileges: "none" };
+      }
+    }
     state.media =
       mediaResult.granted === true ||
       (mediaResult.accessPrivileges &&
@@ -60,7 +82,7 @@ export async function requestOnInstallPermissions(): Promise<PermissionState> {
     console.log("[Permissions] Granted:", state);
     return state;
   } catch (error) {
-    console.error("[Permissions] Failed to request permissions", error);
+    console.warn("[Permissions] Failed to initialize permission state", error);
     return state;
   }
 }

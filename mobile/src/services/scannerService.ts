@@ -1,6 +1,9 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
+import Constants from "expo-constants";
 
 export type ScanType = "document" | "image" | "audio";
 
@@ -15,6 +18,8 @@ export interface ScannableFile {
   location: string;
   fingerprint: string;
 }
+
+const ANDROID_DIRECTORY_URI_KEY = "@axyora/android-directory-uri";
 
 function extToMime(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase();
@@ -51,11 +56,75 @@ function getPickerAssetUri(asset: DocumentPicker.DocumentPickerAsset): string {
   return fileCopyUri || asset.uri;
 }
 
+export async function requestAndroidStorageDirectoryAccess(): Promise<{
+  granted: boolean;
+  directoryUri?: string;
+}> {
+  if (Platform.OS !== "android") {
+    return { granted: false };
+  }
+
+  const saf = (FileSystem as any).StorageAccessFramework;
+  if (!saf?.requestDirectoryPermissionsAsync) {
+    return { granted: false };
+  }
+
+  try {
+    const result = await saf.requestDirectoryPermissionsAsync();
+    if (result?.granted && result?.directoryUri) {
+      await AsyncStorage.setItem(ANDROID_DIRECTORY_URI_KEY, result.directoryUri);
+      return { granted: true, directoryUri: result.directoryUri };
+    }
+  } catch {
+    // Ignore prompt failures; caller can proceed with app sandbox scan.
+  }
+
+  return { granted: false };
+}
+
+async function getStoredAndroidDirectoryUri(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(ANDROID_DIRECTORY_URI_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export async function requestScanPermissions(): Promise<{
   mediaGranted: boolean;
+  runtimeLimited: boolean;
 }> {
-  const media = await MediaLibrary.requestPermissionsAsync();
-  return { mediaGranted: media.granted };
+  let media:
+    | {
+        granted?: boolean;
+        accessPrivileges?: string;
+      }
+    | undefined;
+  let runtimeLimited = false;
+  try {
+    media = await MediaLibrary.requestPermissionsAsync(false, [
+      "photo",
+      "video",
+      "audio",
+    ]);
+  } catch {
+    try {
+      media = await MediaLibrary.getPermissionsAsync(false, [
+        "photo",
+        "video",
+        "audio",
+      ]);
+    } catch {
+      media = { granted: false, accessPrivileges: "none" };
+      runtimeLimited = true;
+    }
+  }
+  return {
+    mediaGranted:
+      media.granted === true ||
+      (typeof media.accessPrivileges === "string" && media.accessPrivileges.indexOf("all") >= 0),
+    runtimeLimited,
+  };
 }
 
 export async function pickDocuments(): Promise<ScannableFile[]> {
@@ -169,19 +238,25 @@ async function scanMediaAssets(
   return files;
 }
 
-async function walkDirectory(path: string): Promise<string[]> {
+async function walkDirectory(path: string, maxFiles: number, output: string[] = []): Promise<string[]> {
+  if (output.length >= maxFiles) {
+    return output;
+  }
+
   const entries = await FileSystem.readDirectoryAsync(path);
-  const output: string[] = [];
 
   for (const entry of entries) {
-    const full = `${path}${entry}`;
+    if (output.length >= maxFiles) {
+      break;
+    }
+
+    const full = path.endsWith("/") ? `${path}${entry}` : `${path}/${entry}`;
     const info = await FileSystem.getInfoAsync(full);
     if (!info.exists) {
       continue;
     }
     if (info.isDirectory) {
-      const nested = await walkDirectory(`${full}/`);
-      output.push(...nested);
+      await walkDirectory(`${full}/`, maxFiles, output);
     } else {
       output.push(full);
     }
@@ -190,11 +265,47 @@ async function walkDirectory(path: string): Promise<string[]> {
   return output;
 }
 
+async function walkSafDirectory(uri: string, maxFiles: number, output: string[] = []): Promise<string[]> {
+  if (output.length >= maxFiles) {
+    return output;
+  }
+
+  const saf = (FileSystem as any).StorageAccessFramework;
+  if (!saf?.readDirectoryAsync) {
+    return output;
+  }
+
+  const entries: string[] = await saf.readDirectoryAsync(uri);
+  for (const entryUri of entries) {
+    if (output.length >= maxFiles) {
+      break;
+    }
+
+    try {
+      const info = await FileSystem.getInfoAsync(entryUri);
+      if (!info.exists) {
+        continue;
+      }
+      if (info.isDirectory) {
+        await walkSafDirectory(entryUri, maxFiles, output);
+      } else {
+        output.push(entryUri);
+      }
+    } catch {
+      // Ignore inaccessible children and continue.
+    }
+  }
+
+  return output;
+}
+
 export async function scanAppDocumentDirectory(
-  maxFiles = 200,
+  maxFiles = 300,
   onProgress?: (p: ScanProgress) => void
 ): Promise<ScannableFile[]> {
-  if (!FileSystem.documentDirectory) {
+  // @ts-ignore - documentDirectory exists on FileSystem API
+  const docDir = (FileSystem as any).documentDirectory || FileSystem.documentDirectory;
+  if (!docDir) {
     return [];
   }
 
@@ -202,48 +313,130 @@ export async function scanAppDocumentDirectory(
     onProgress({ phase: "scanning_docs", current: 0 });
   }
 
-  const allPaths = await walkDirectory(FileSystem.documentDirectory);
-  const files: ScannableFile[] = [];
+  const roots = [docDir];
+  if (Platform.OS === "android") {
+    // Add all major public storage paths on Android
+    roots.push(
+      "file:///storage/emulated/0/DCIM/",        // Camera & screenshots
+      "file:///storage/emulated/0/Pictures/",    // Pictures gallery
+      "file:///storage/emulated/0/Download/",    // Downloaded files
+      "file:///storage/emulated/0/Documents/",   // Documents
+      "file:///storage/emulated/0/Music/",       // Music & audio
+      "file:///storage/emulated/0/Podcasts/",    // Podcasts
+      "file:///storage/emulated/0/Recordings/",  // Voice recordings
+      "file:///storage/emulated/0/Movies/",      // Videos
+      "file:///sdcard/DCIM/",                     // Alternative SD card path
+      "file:///sdcard/Pictures/",
+      "file:///sdcard/Download/"
+    );
+  }
 
-  for (let i = 0; i < allPaths.slice(0, maxFiles).length; i++) {
+  const allPaths: string[] = [];
+  const seen = new Set<string>();
+  for (const root of roots) {
+    if (allPaths.length >= maxFiles) {
+      break;
+    }
+
+    try {
+      const info = await FileSystem.getInfoAsync(root);
+      if (!info.exists || !info.isDirectory) {
+        continue;
+      }
+
+      const remaining = maxFiles - allPaths.length;
+      const walked = await walkDirectory(root, remaining, []);
+      for (const p of walked) {
+        if (!seen.has(p)) {
+          seen.add(p);
+          allPaths.push(p);
+        }
+      }
+      console.log(`[Scanner] Scanned ${root}: found ${walked.length} files`);
+    } catch (err) {
+      // Ignore inaccessible roots and continue scanning available locations.
+      console.warn(`[Scanner] Could not scan ${root}:`, err);
+    }
+  }
+
+  // Include SAF directory if available
+  if (Platform.OS === "android" && allPaths.length < maxFiles) {
+    const safRoot = await getStoredAndroidDirectoryUri();
+    if (safRoot) {
+      try {
+        console.log(`[Scanner] Scanning SAF directory: ${safRoot}`);
+        const remaining = maxFiles - allPaths.length;
+        const safFiles = await walkSafDirectory(safRoot, remaining, []);
+        for (const p of safFiles) {
+          if (!seen.has(p)) {
+            seen.add(p);
+            allPaths.push(p);
+          }
+        }
+        console.log(`[Scanner] SAF scan found ${safFiles.length} files`);
+      } catch (err) {
+        // Ignore SAF traversal errors and keep other scan results.
+        console.warn(`[Scanner] SAF traversal failed:`, err);
+      }
+    } else {
+      console.log(`[Scanner] No SAF directory stored; skipping SAF scan`);
+    }
+  }
+
+  const files: ScannableFile[] = [];
+  const supportedExtensions = /\.(pdf|doc|docx|txt|xls|xlsx|ppt|pptx|json|csv|md|jpg|jpeg|png|webp|gif|bmp|mp3|m4a|wav|ogg|flac|aac|mov|mp4|avi|mkv|wmv|m4v)$/i;
+
+  for (let i = 0; i < allPaths.length; i++) {
     const path = allPaths[i];
     const name = path.split("/").pop() || "unknown";
     
-    if (onProgress && i % 5 === 0) {
+    if (onProgress && i % 10 === 0) {
       onProgress({
         phase: "scanning_docs",
         current: i + 1,
-        total: Math.min(allPaths.length, maxFiles),
+        total: allPaths.length,
         lastFile: name,
       });
     }
 
-    const mimeType = extToMime(name);
-    const type = fileTypeFromMime(mimeType);
-    if (type !== "document") {
+    // Filter by supported file extensions only
+    if (!supportedExtensions.test(name)) {
       continue;
     }
 
-    const info = await FileSystem.getInfoAsync(path);
-    if (!info.exists || info.isDirectory) {
+    try {
+      const info = await FileSystem.getInfoAsync(path);
+      if (!info.exists || info.isDirectory) {
+        continue;
+      }
+
+      const mimeType = extToMime(name);
+      const modifiedAt = Number((info as unknown as { modificationTime?: number }).modificationTime ?? Date.now());
+      const size = Number((info as unknown as { size?: number }).size ?? 0);
+      
+      // Skip empty files and files larger than 500MB
+      if (size === 0 || size > 500 * 1024 * 1024) {
+        continue;
+      }
+
+      files.push({
+        id: `${path}-${size}`,
+        uri: path,
+        name,
+        mimeType,
+        type: fileTypeFromMime(mimeType),
+        size,
+        modifiedAt,
+        location: path,
+        fingerprint: buildFingerprint(path, size, modifiedAt),
+      });
+    } catch (err) {
+      console.warn(`[Scanner] Could not read file info for ${path}:`, err);
       continue;
     }
-
-    const modifiedAt = Number((info as unknown as { modificationTime?: number }).modificationTime ?? Date.now());
-    const size = Number((info as unknown as { size?: number }).size ?? 0);
-    files.push({
-      id: `${path}-${size}`,
-      uri: path,
-      name,
-      mimeType,
-      type,
-      size,
-      modifiedAt,
-      location: path,
-      fingerprint: buildFingerprint(path, size, modifiedAt),
-    });
   }
 
+  console.log(`[Scanner] Total files found in document scan: ${files.length}`);
   return files;
 }
 
@@ -262,10 +455,18 @@ export async function scanDeviceFiles(options?: {
 
   const files: ScannableFile[] = [];
 
-  if (includeImages) {
+  let mediaAllowed = true;
+  try {
+    const perms = await requestScanPermissions();
+    mediaAllowed = perms.mediaGranted;
+  } catch {
+    mediaAllowed = false;
+  }
+
+  if (includeImages && mediaAllowed) {
     files.push(...(await scanMediaAssets("image", mediaLimit, onProgress)));
   }
-  if (includeAudio) {
+  if (includeAudio && mediaAllowed) {
     files.push(...(await scanMediaAssets("audio", mediaLimit, onProgress)));
   }
   if (includeDocuments) {

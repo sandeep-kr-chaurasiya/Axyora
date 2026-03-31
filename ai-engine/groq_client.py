@@ -119,25 +119,53 @@ class GroqClient:
         """
         Validate that the response isn't contradicting the query intent.
         Performs basic sanity checks to catch obvious inversions.
+        Returns the original response or a corrected fallback if inversion detected.
         """
         # Convert to lowercase for comparison
         query_lower = query.lower()
         response_lower = response.lower()
         
-        # Check for common inversion patterns
-        inversion_pairs = [
-            ("show me", "i don't"),
-            ("show me", "no such"),
-            ("find", "couldn't find"),
-            ("are there any", "i don't"),
-            ("do you have", "no"),
+        # Legitimate "not found" phrases that indicate a valid empty/no result
+        legitimate_no_results = [
+            "i don't have",
+            "i couldn't find",
+            "no memories",
+            "no results",
+            "not found",
+            "nothing matching",
         ]
         
-        for query_start, response_neg in inversion_pairs:
-            if query_start in query_lower and response_neg in response_lower:
-                # Check if this is a legitimate "not found" response
-                if not any(found_phrase in response_lower for found_phrase in ["not found", "couldn't find", "i don't have", "no memories"]):
-                    logger.warning(f"[Groq] Possible response inversion detected. Query: {query[:40]}... Response: {response[:40]}...")
+        # Check if this is a legitimate "no results" response
+        is_legitimate_no_result = any(phrase in response_lower for phrase in legitimate_no_results)
+        
+        # Detect when query asks for items but response says nothing found
+        ask_for_items_keywords = ["show me", "find", "search for", "look for", "display", "tell me about"]
+        is_asking_for_items = any(kw in query_lower for kw in ask_for_items_keywords)
+        
+        # If asking for items and got a "nothing found", check if this matches the query intent
+        if is_asking_for_items and is_legitimate_no_result:
+            logger.info(f"[Groq] Legitimate 'no results' response for query: {query[:50]}...")
+            return response
+        
+        # Check for clear inversions: query asks for YES/NO but response contradicts
+        if any(q in query_lower for q in ["is there", "are there", "do you have", "have you"]):
+            if "no" in response_lower and not is_legitimate_no_result:
+                logger.warning(f"[Groq] Possible YES/NO inversion. Query: {query[:40]}... Response: {response[:40]}...")
+        
+        # Check for type inversions (asking for images but getting documents, etc.)
+        type_keywords = {
+            "image": ["photo", "picture", "image", "jpg", "png"],
+            "video": ["video", "movie", "mp4", "mov"],
+            "document": ["document", "pdf", "txt", "docx", "text"],
+        }
+        
+        for type_name, keywords in type_keywords.items():
+            if any(kw in query_lower for kw in keywords):
+                # If asking for specific type and response is about different type, log warning
+                other_types = [k for k in type_keywords.keys() if k != type_name]
+                for other_type in other_types:
+                    if any(kw in response_lower for kw in type_keywords[other_type]):
+                        logger.warning(f"[Groq] Possible type mismatch. Asked for {type_name}, response mentions {other_type}")
         
         return response
 

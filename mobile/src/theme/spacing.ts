@@ -1,4 +1,4 @@
-// spacing.ts - Comprehensive spacing system
+// spacing.ts - Premium spacing & design tokens system
 
 import type { TextStyle } from "react-native";
 
@@ -18,37 +18,72 @@ export const borderRadii = {
   lg: 12,
   xl: 16,
   xxl: 24,
+  glass: 20,
   round: 9999,
 };
 
+// Soft shadows for glassmorphic effect
 export const shadows = {
+  none: {
+    shadowColor: "transparent",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
   sm: {
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.18,
-    shadowRadius: 1.0,
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
     elevation: 1,
   },
   md: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
     elevation: 5,
   },
   lg: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.29,
-    shadowRadius: 4.65,
-    elevation: 7,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
   },
   xl: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    elevation: 15,
+  },
+  glow: {
+    shadowColor: "#8B5CF6",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+};
+
+// Premium glass effects
+export const glass = {
+  light: {
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    backdropFilter: "blur(10px)",
+  },
+  medium: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    backdropFilter: "blur(20px)",
+  },
+  dark: {
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    backdropFilter: "blur(15px)",
   },
 };
 
@@ -67,14 +102,16 @@ type TypographyScale = {
 
 export const typography: TypographyScale = {
   h1: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: "800",
-    lineHeight: 40,
+    lineHeight: 44,
+    letterSpacing: -0.5,
   },
   h2: {
     fontSize: 28,
     fontWeight: "700",
     lineHeight: 36,
+    letterSpacing: -0.3,
   },
   h3: {
     fontSize: 24,
@@ -90,30 +127,36 @@ export const typography: TypographyScale = {
     fontSize: 16,
     fontWeight: "400",
     lineHeight: 24,
+    letterSpacing: 0.2,
   },
   bodyBold: {
     fontSize: 16,
     fontWeight: "600",
     lineHeight: 24,
+    letterSpacing: 0.2,
   },
   small: {
     fontSize: 14,
     fontWeight: "400",
     lineHeight: 20,
+    letterSpacing: 0.1,
   },
   smallBold: {
     fontSize: 14,
     fontWeight: "600",
     lineHeight: 20,
+    letterSpacing: 0.1,
   },
   caption: {
     fontSize: 12,
     fontWeight: "400",
     lineHeight: 16,
+    letterSpacing: 0,
   },
   captionBold: {
     fontSize: 12,
     fontWeight: "600",
     lineHeight: 16,
+    letterSpacing: 0,
   },
 };

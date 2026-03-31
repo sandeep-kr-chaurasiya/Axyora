@@ -1,18 +1,25 @@
 import { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, View, Image } from "react-native";
-
-import { colors } from "../theme/colors";
+import { colors, spacing, borderRadii, shadows, typography } from "../theme";
 
 export function MessageBubble(props: { role: "user" | "assistant"; text: string }) {
-  const y = useRef(new Animated.Value(14)).current;
-  const alpha = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
-      Animated.spring(y, { toValue: 0, damping: 16, stiffness: 210, useNativeDriver: true }),
-      Animated.timing(alpha, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
     ]).start();
-  }, [alpha, y]);
+  }, [slideAnim, opacityAnim]);
 
   const isUser = props.role === "user";
 
@@ -21,19 +28,22 @@ export function MessageBubble(props: { role: "user" | "assistant"; text: string 
       style={[
         styles.container,
         isUser ? styles.userContainer : styles.assistantContainer,
-        { opacity: alpha, transform: [{ translateY: y }] },
+        {
+          opacity: opacityAnim,
+          transform: [{ translateX: isUser ? slideAnim : slideAnim.interpolate({inputRange: [0, 30], outputRange: [0, -30]}) }],
+        },
       ]}
     >
       <View style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}>
         {/* Axyora Logo for Assistant */}
         {!isUser && (
-          <Image 
+          <Image
             source={require("../../Axyora transparent .png")}
-            style={styles.logoImage} 
+            style={styles.logoImage}
             resizeMode="contain"
           />
         )}
-        
+
         <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
           <Text style={styles.text}>{props.text}</Text>
         </View>
@@ -44,15 +54,15 @@ export function MessageBubble(props: { role: "user" | "assistant"; text: string 
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 10,
+    marginBottom: spacing.md,
     width: "100%",
-    // Ensure proper scoping of animation transforms
     overflow: "hidden",
   },
   messageRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 6,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
   userRow: {
     justifyContent: "flex-end",
@@ -61,13 +71,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   logoImage: {
-    width: 24,
-    height: 24,
-    marginBottom: 4,
-  },
-  logo: {
-    fontSize: 20,
-    marginBottom: 4,
+    width: 28,
+    height: 28,
+    marginBottom: spacing.xs,
   },
   userContainer: {
     alignItems: "flex-end",
@@ -76,23 +82,27 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   bubble: {
-    maxWidth: "87%",
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    maxWidth: "80%",
+    borderRadius: borderRadii.xl,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderWidth: 1,
   },
   userBubble: {
-    backgroundColor: "#123327",
-    borderColor: "#1D5A43",
+    // Premium purple/blue gradient feel
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryLight,
+    ...shadows.md,
   },
   assistantBubble: {
-    backgroundColor: "#151C2D",
+    // Premium glassmorphic dark
+    backgroundColor: colors.surfaceGlass,
     borderColor: colors.border,
+    ...shadows.sm,
   },
   text: {
+    ...typography.body,
     color: colors.text,
-    fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 24,
   },
 });

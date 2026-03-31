@@ -93,10 +93,9 @@ export function ChatScreen() {
       >
         {/* Header with back button */}
         <View style={styles.header}>
-          <TouchableOpacity 
+          <Pressable 
             style={styles.headerLeft}
             onPress={() => setShowDrawer(true)}
-            activeOpacity={0.7}
           >
             <Image 
               source={require("../../Axyora transparent .png")}
@@ -107,15 +106,14 @@ export function ChatScreen() {
               <Text style={styles.headerTitle}>Axyora</Text>
               <Text style={styles.headerSubtitle}>Your AI Memory</Text>
             </View>
-          </TouchableOpacity>
+          </Pressable>
           <View style={styles.headerRight}>
-            <TouchableOpacity
+            <Pressable
               style={styles.menuButton}
               onPress={() => setShowSettings(true)}
-              activeOpacity={0.7}
             >
-              <Text style={styles.menuButtonText}>☰</Text>
-            </TouchableOpacity>
+              <SendIcon size={20} color={colors.text} />
+            </Pressable>
           </View>
         </View>
 
@@ -131,17 +129,17 @@ export function ChatScreen() {
           updateCellsBatchingPeriod={50}
           renderItem={({ item }) => (
             <View style={styles.messageGroup}>
-              {/* Image Grid - Always on top when images exist */}
+              {/* Message Bubble - First */}
+              <View style={styles.messageSection}>
+                <MessageBubble role={item.role} text={item.text} />
+              </View>
+
+              {/* Image Grid - Below message */}
               {item.role === "assistant" && item.images?.length ? (
                 <View style={styles.imageSection}>
                   <ChatImageGrid images={item.images} maxImages={6} />
                 </View>
               ) : null}
-
-              {/* Message Bubble - Below images */}
-              <View style={styles.messageSection}>
-                <MessageBubble role={item.role} text={item.text} />
-              </View>
             </View>
           )}
           ListEmptyComponent={
@@ -176,18 +174,17 @@ export function ChatScreen() {
               editable={!isLoading}
               maxLength={500}
             />
-            <TouchableOpacity
+            <Pressable
               style={[styles.send, isLoading && styles.sendDisabled]}
               onPress={submit}
               disabled={isLoading || !input.trim()}
-              activeOpacity={0.8}
             >
               {isLoading ? (
-                <ActivityIndicator color="#06070B" size="small" />
+                <ActivityIndicator color={colors.textInverse} size="small" />
               ) : (
-                <Text style={styles.sendText}>↑</Text>
+                <SendIcon size={20} color={colors.textInverse} />
               )}
-            </TouchableOpacity>
+            </Pressable>
           </View>
           {input.length > 450 && (
             <Text style={styles.charCount}>{input.length}/500</Text>
@@ -256,9 +253,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: "rgba(17,17,17,0.7)",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "rgba(255,255,255,0.05)",
   },
   headerLeft: {
     flexDirection: "row",
@@ -283,8 +280,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     ...typography.h4,
-    color: colors.text,
-    fontWeight: "700",
+    color: "#ffffff",
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   headerSubtitle: {
     ...typography.caption,
@@ -316,8 +314,8 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   messageGroup: {
-    marginBottom: spacing.xl,
-    marginHorizontal: spacing.md,
+    marginBottom: 18,
+    paddingHorizontal: 8,
   },
   imageSection: {
     marginBottom: spacing.lg,
@@ -329,7 +327,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: spacing.xl,
+    opacity: 0.9,
   },
   emptyStateIcon: {
     width: 80,
@@ -349,12 +347,16 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   inputContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
+    position: "absolute",
+    bottom: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: "rgba(20,20,20,0.85)",
+    borderRadius: 24,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    ...shadows.lg,
   },
   inputContainerActive: {
     backgroundColor: colors.surfaceLight,
@@ -367,17 +369,13 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 44,
     maxHeight: 100,
-    backgroundColor: colors.input,
-    borderColor: colors.inputBorder,
-    borderWidth: 1,
-    borderRadius: borderRadii.lg,
-    color: colors.text,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    ...typography.body,
-    lineHeight: 20,
+    color: "#ffffff",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    backgroundColor: "transparent",
   },
   inputActive: {
     borderColor: colors.inputFocus,
@@ -385,13 +383,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.inputHover,
   },
   send: {
-    height: 48,
-    width: 48,
-    borderRadius: borderRadii.lg,
-    backgroundColor: colors.primary,
+    height: 44,
+    width: 44,
+    borderRadius: 22,
+    backgroundColor: "#6C63FF",
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.md,
+    shadowColor: "#6C63FF",
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
   sendDisabled: {
     opacity: 0.5,

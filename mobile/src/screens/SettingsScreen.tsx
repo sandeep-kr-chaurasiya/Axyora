@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   Text,
@@ -35,14 +36,45 @@ export function SettingsScreen(props: {
     processingTime: '0 ms',
   });
 
-  // Simulated stats loading
   useEffect(() => {
-    setStats({
-      indexedFiles: 247,
-      totalMemorySize: '1.2 MB',
-      processingTime: '234 ms',
-    });
+    const loadRealStats = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/index-stats");
+        const data = await res.json();
+
+        setStats({
+          indexedFiles: data.total_files || 0,
+          totalMemorySize: data.total_size || '0 MB',
+          processingTime: data.avg_query_time
+            ? `${data.avg_query_time} ms`
+            : '0 ms',
+        });
+      } catch (e) {
+        console.log("Failed to load stats", e);
+      }
+    };
+
+    loadRealStats();
   }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const refresh = async () => {
+        try {
+          const res = await fetch("http://localhost:8000/index-stats");
+          const data = await res.json();
+          setStats({
+            indexedFiles: data.total_files || 0,
+            totalMemorySize: data.total_size || '0 MB',
+            processingTime: data.avg_query_time
+              ? `${data.avg_query_time} ms`
+              : '0 ms',
+          });
+        } catch {}
+      };
+      refresh();
+    }, [])
+  );
 
   const handleClearData = () => {
     Alert.alert(
@@ -57,6 +89,7 @@ export function SettingsScreen(props: {
             setClearing(true);
             try {
               await props.onClearData?.();
+              await fetch("http://localhost:8000/clear", { method: "DELETE" });
               Alert.alert("Success", "All data cleared");
             } catch (err) {
               Alert.alert("Error", "Failed to clear data");
@@ -81,6 +114,7 @@ export function SettingsScreen(props: {
           onPress: async () => {
             setLoggingOut(true);
             try {
+              await fetch("http://localhost:8000/session/end", { method: "POST" });
               await props.onLogout?.();
             } catch (err) {
               Alert.alert("Error", "Failed to logout");
@@ -107,7 +141,7 @@ export function SettingsScreen(props: {
   return (
     <SafeAreaView style={styles.safeContainer}>
       <LinearGradient
-        colors={[colors.background, colors.backgroundTertiary]}
+        colors={[colors.background, colors.surfaceLight]}
         style={styles.container}
       >
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -223,7 +257,18 @@ export function SettingsScreen(props: {
               </View>
               <Switch
                 value={storageOptimization}
-                onValueChange={setStorageOptimization}
+                onValueChange={async (val) => {
+                  setStorageOptimization(val);
+                  try {
+                    await fetch("http://localhost:8000/settings", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ storage_optimization: val }),
+                    });
+                  } catch (e) {
+                    console.log("Failed to update storage optimization");
+                  }
+                }}
                 trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
                 thumbColor={storageOptimization ? colors.accent : colors.backgroundAlt}
               />
@@ -243,7 +288,18 @@ export function SettingsScreen(props: {
               </View>
               <Switch
                 value={backgroundProcessing}
-                onValueChange={setBackgroundProcessing}
+                onValueChange={async (val) => {
+                  setBackgroundProcessing(val);
+                  try {
+                    await fetch("http://localhost:8000/settings", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ background_processing: val }),
+                    });
+                  } catch (e) {
+                    console.log("Failed to update background processing");
+                  }
+                }}
                 trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
                 thumbColor={backgroundProcessing ? colors.accent : colors.backgroundAlt}
               />
@@ -263,7 +319,18 @@ export function SettingsScreen(props: {
               </View>
               <Switch
                 value={autoIndex}
-                onValueChange={setAutoIndex}
+                onValueChange={async (val) => {
+                  setAutoIndex(val);
+                  try {
+                    await fetch("http://localhost:8000/settings", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ auto_index: val }),
+                    });
+                  } catch (e) {
+                    console.log("Failed to update auto index");
+                  }
+                }}
                 trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
                 thumbColor={autoIndex ? colors.accent : colors.backgroundAlt}
               />
@@ -288,7 +355,18 @@ export function SettingsScreen(props: {
               </View>
               <Switch
                 value={encryptionEnabled}
-                onValueChange={setEncryptionEnabled}
+                onValueChange={async (val) => {
+                  setEncryptionEnabled(val);
+                  try {
+                    await fetch("http://localhost:8000/settings", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ encryption: val }),
+                    });
+                  } catch (e) {
+                    console.log("Failed to update encryption");
+                  }
+                }}
                 trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
                 thumbColor={encryptionEnabled ? colors.accent : colors.backgroundAlt}
               />

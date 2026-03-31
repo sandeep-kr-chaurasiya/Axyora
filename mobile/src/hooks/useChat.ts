@@ -18,22 +18,31 @@ const CHAT_HISTORY_KEY = "@axyora/chat-history";
 const CURRENT_CHAT_ID_KEY = "@axyora/current-chat-id";
 const MAX_HISTORY_MESSAGES = 100;
 
-const GREETINGS = [
-  "Hey! 👋",
-  "Hi there! 👋",
-  "Hello! 😊",
-  "Hey! 🧠",
+const CASUAL_GREETINGS = [
+  "Hey!",
+  "So I found",
+  "Awesome!",
+  "Found some",
+  "Check it out",
+];
+
+const IMAGE_RESPONSES = [
+  (count: number) => `Found ${count} amazing image${count !== 1 ? "s" : ""} for you! 📸`,
+  (count: number) => `I dug up ${count} image${count !== 1 ? "s" : ""} from your memories! 🎯`,
+  (count: number) => `Here are ${count} image${count !== 1 ? "s" : ""} that match! 🖼️`,
+  (count: number) => `Got ${count} perfect match${count !== 1 ? "es" : ""} for you! ✨`,
+  (count: number) => `Pulled up ${count} image${count !== 1 ? "s" : ""} for you! 🔍`,
 ];
 
 const GREETING_RESPONSES = {
   answer: (greeting: string) =>
     `${greeting} I'm here to help you search through your memories. What would you like to find?`,
   noResults: (greeting: string) =>
-    `${greeting} I searched but didn't find anything matching that. Try asking differently or with more specific keywords.`,
+    `${greeting} Hmm, I didn't find anything matching that. Try asking differently or with more specific keywords!`,
   imageSearch: (count: number) =>
-    `${GREETINGS[Math.floor(Math.random() * GREETINGS.length)]} Found ${count} image${count !== 1 ? "s" : ""} for you! 📸`,
+    IMAGE_RESPONSES[Math.floor(Math.random() * IMAGE_RESPONSES.length)](count),
   textSearch: (preview: string) =>
-    `${GREETINGS[Math.floor(Math.random() * GREETINGS.length)]} I found this in your memory:\n\n${preview}`,
+    `${CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)]}! I found this in your memory:\n\n${preview}`,
 };
 
 export function useChat() {
@@ -142,17 +151,18 @@ export function useChat() {
       // Generate friendly assistant response with context
       let answerText = response.answer;
       if (!answerText || answerText.includes("no memory")) {
-        answerText = GREETING_RESPONSES.noResults(
-          GREETINGS[Math.floor(Math.random() * GREETINGS.length)]
-        );
+        const greeting = CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)];
+        answerText = GREETING_RESPONSES.noResults(greeting);
       } else if (response.images?.length && !response.sources?.length) {
-        // Only images found
+        // Only images found - use friendly conversational response
         console.log(`[Chat] Images found without sources`);
-        answerText = GREETING_RESPONSES.imageSearch(response.images.length);
+        // Estimate valid images (accounting for HEIC filtering, typically ~40-50% HEIC)
+        const estimatedValidCount = Math.max(1, Math.ceil(response.images.length * 0.6));
+        answerText = GREETING_RESPONSES.imageSearch(estimatedValidCount);
       } else if (response.images?.length && response.sources?.length) {
-        // Both found - prepend greeting
-        const greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
-        answerText = `${greeting} ${response.answer}`;
+        // Both found - use original answer with greeting prefix
+        const greeting = CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)];
+        answerText = `${greeting}! ${response.answer}`;
       }
 
       const assistantMessage: ChatMessage = {

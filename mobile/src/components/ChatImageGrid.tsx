@@ -38,36 +38,37 @@ interface ChatImageGridProps {
 export function ChatImageGrid(props: ChatImageGridProps) {
   const { images, maxImages = 6 } = props;
   const [expandedImage, setExpandedImage] = useState<ImageResult | null>(null);
+  const [failedImageNames, setFailedImageNames] = useState<Set<string>>(new Set());
   
-  // Show only top 6 most relevant images
-  const topImages = images.slice(0, maxImages);
+  // Show only top 6 most relevant images, filtered to exclude HEIC and failed images
+  const validImages = images
+    .filter(img => {
+      // Skip HEIC files (not well supported on iOS simulator/native)
+      if (img.file_name.toLowerCase().endsWith('.heic')) {
+        return false;
+      }
+      // Skip images that failed to load
+      if (failedImageNames.has(img.file_name)) {
+        return false;
+      }
+      return !!img.image_uri;
+    })
+    .slice(0, maxImages);
 
   const renderImageItem = ({ item }: { item: ImageResult }) => {
-    // Debug logging for image loading
-    console.log(`[ChatImageGrid] Rendering image: ${item.file_name}`);
-    console.log(`[ChatImageGrid] File path: ${item.file_path}`);
-    console.log(`[ChatImageGrid] Image URI: ${item.image_uri}`);
-    console.log(`[ChatImageGrid] Score: ${item.score}`);
-
     // Ensure proper file URI construction
     let imageUri: string | null = null;
-    if (item.image_uri) {
-      let path = item.image_uri as string;
-      
-      // If already a complete file:// URI, use as-is
-      if (path.startsWith("file://")) {
-        imageUri = path;
-      } else {
-        // Otherwise, construct file:// URI
-        // Ensure it starts with /
-        if (!path.startsWith("/")) {
-          path = "/" + path;
-        }
-        imageUri = `file://${path}`;
-      }
-      console.log(`[ChatImageGrid] Constructed URI: ${imageUri}`);
+    let path = item.image_uri as string;
+    
+    // If already a complete file:// URI, use as-is
+    if (path.startsWith("file://")) {
+      imageUri = path;
     } else {
-      console.warn(`[ChatImageGrid] No image_uri provided for ${item.file_name}`);
+      // Otherwise, construct file:// URI
+      if (!path.startsWith("/")) {
+        path = "/" + path;
+      }
+      imageUri = `file://${path}`;
     }
 
     return (
@@ -75,7 +76,6 @@ export function ChatImageGrid(props: ChatImageGridProps) {
         activeOpacity={0.8} 
         style={styles.gridItem}
         onPress={() => {
-          console.log(`[ChatImageGrid] Image tapped: ${item.file_name}`);
           setExpandedImage(item);
         }}
       >
@@ -85,18 +85,21 @@ export function ChatImageGrid(props: ChatImageGridProps) {
             source={{ uri: imageUri }}
             style={styles.image}
             resizeMode="cover"
-            onLoad={() => console.log(`[ChatImageGrid] Image loaded: ${item.file_name}`)}
-            onError={(error) => {
-              console.error(`[ChatImageGrid] Image failed to load: ${item.file_name}`);
-              console.error(`[ChatImageGrid] Error: ${JSON.stringify(error)}`);
-              console.error(`[ChatImageGrid] Attempted URI: ${imageUri}`);
+            onLoad={() => {
+              // Successfully loaded
+              setFailedImageNames(prev => {
+                const updated = new Set(prev);
+                updated.delete(item.file_name);
+                return updated;
+              });
+            }}
+            onError={() => {
+              console.warn(`[ChatImageGrid] Failed to load: ${item.file_name}`);
+              // Mark as failed to exclude from grid
+              setFailedImageNames(prev => new Set(prev).add(item.file_name));
             }}
           />
-        ) : (
-          <View style={[styles.image, styles.imagePlaceholder]}>
-            <Text style={styles.placeholderIcon}>🖼️</Text>
-          </View>
-        )}
+        ) : null}
 
         {/* Score Badge */}
         <View style={styles.scoreBadge}>
@@ -106,7 +109,7 @@ export function ChatImageGrid(props: ChatImageGridProps) {
     );
   };
 
-  if (topImages.length === 0) {
+  if (validImages.length === 0) {
     return null;
   }
 
@@ -115,7 +118,7 @@ export function ChatImageGrid(props: ChatImageGridProps) {
       {/* Chat Thumbnail Grid */}
       <View style={styles.container}>
         <FlatList
-          data={topImages}
+          data={validImages}
           renderItem={renderImageItem}
           keyExtractor={(item, idx) => `${item.file_name}-${idx}`}
           numColumns={GRID_COLS}

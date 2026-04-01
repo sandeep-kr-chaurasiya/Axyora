@@ -8,9 +8,12 @@ import {
   Dimensions,
   ScrollView,
   Linking,
+  StatusBar,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
+import { spacing, borderRadii } from "../theme/spacing";
+import { typography } from "../theme/fonts";
 
 const { width } = Dimensions.get("window");
 
@@ -19,41 +22,62 @@ interface OnboardingSlide {
   title: string;
   description: string;
   icon: string;
-  color: string;
+  accent: string;
+  highlights: string[];
 }
 
 const slides: OnboardingSlide[] = [
   {
-    id: "memory",
-    title: "Your Memory, Organized",
+    id: "search",
+    title: "Search Your Memories Instantly",
     description:
-      "Axyora finds anything from your device instantly.\n\nSearch photos, documents, audio, and text with natural language.",
-    icon: "🧠",
-    color: "#7C3AED",
+      "Ask in natural language and instantly find photos, documents, and more.",
+    icon: "SEARCH",
+    accent: "#10B981",
+    highlights: [
+      "Search photos, PDFs, and notes in one place",
+      "Natural language queries work instantly",
+      "Visual results with confidence scores",
+    ],
   },
   {
     id: "privacy",
-    title: "Private by Design",
+    title: "Privacy-First & Local",
     description:
-      "All your data stays on your device.\n\nNothing is uploaded without your control. 100% local processing.",
-    icon: "🔒",
-    color: "#10B981",
-  },
-  {
-    id: "images",
-    title: "Understands Images",
-    description:
-      'Search photos like "mountain", "documents", "receipts".\n\nAI automatically extracts meaning from images.',
-    icon: "🖼️",
-    color: "#F59E0B",
+      "All processing happens on your device. Your data never leaves your phone.",
+    icon: "PRIVACY",
+    accent: "#22C55E",
+    highlights: [
+      "Local indexing and encrypted cache",
+      "No uploads unless you explicitly share",
+      "Full control over your data",
+    ],
   },
   {
     id: "ai",
-    title: "AI That Knows Your Data",
+    title: "Powered by AI",
     description:
-      "Ask anything and get answers instantly.\n\nYour AI memory engine learns your files.",
-    icon: "✨",
-    color: "#06B6D4",
+      "Advanced image understanding and semantic search tuned for your files.",
+    icon: "AI",
+    accent: "#06B6D4",
+    highlights: [
+      "Semantic search across images and text",
+      "Context-aware answers and summaries",
+      "Fast response times with smart caching",
+    ],
+  },
+  {
+    id: "start",
+    title: "Let’s Get Started",
+    description:
+      "Create your secure account and connect your memories in minutes.",
+    icon: "START",
+    accent: "#0EA5E9",
+    highlights: [
+      "Sign in to personalize your memory engine",
+      "We’ll ask for file access after login",
+      "Takes about two minutes to set up",
+    ],
   },
 ];
 
@@ -66,15 +90,14 @@ export function SwipeableOnboardingScreen(props: {
   const [agreePrivacy, setAgreePrivacy] = useState(false);
 
   useEffect(() => {
-    // Animate active dot
     slides.forEach((_, index) => {
       Animated.timing(dotAnimations[index], {
         toValue: index === currentIndex ? 1 : 0,
-        duration: 300,
+        duration: 280,
         useNativeDriver: true,
       }).start();
     });
-  }, [currentIndex]);
+  }, [currentIndex, dotAnimations]);
 
   const handleScroll = (event: any) => {
     const offsetX = event.nativeEvent.contentOffset.x;
@@ -89,14 +112,20 @@ export function SwipeableOnboardingScreen(props: {
     });
   };
 
-  const slide = slides[currentIndex];
   const isLastSlide = currentIndex === slides.length - 1;
 
   return (
     <LinearGradient
-      colors={["#06070B", "#0D1428", "#071A25"]}
+      colors={["#050505", "#0B1418", "#07110E"]}
       style={styles.container}
     >
+      <StatusBar barStyle="light-content" />
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={props.onComplete} style={styles.skipButton}>
+          <Text style={styles.skipText}>Skip</Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         ref={scrollViewRef}
         horizontal
@@ -104,21 +133,26 @@ export function SwipeableOnboardingScreen(props: {
         scrollEventThrottle={16}
         onScroll={handleScroll}
         showsHorizontalScrollIndicator={false}
-        scrollEnabled={currentIndex < slides.length - 1}
       >
         {slides.map((s) => (
           <View key={s.id} style={styles.slide}>
             <View style={styles.slideContent}>
-              {/* Icon */}
-              <Text style={[styles.icon, { color: s.color }]}>{s.icon}</Text>
+              <View style={[styles.iconWrap, { borderColor: `${s.accent}44` }]}>
+                <Text style={[styles.iconLabel, { color: s.accent }]}>{s.icon}</Text>
+              </View>
 
-              {/* Title */}
               <Text style={styles.title}>{s.title}</Text>
-
-              {/* Description */}
               <Text style={styles.description}>{s.description}</Text>
 
-              {/* Privacy agreement on last slide */}
+              <View style={styles.highlights}>
+                {s.highlights.map((item) => (
+                  <View key={item} style={styles.highlightRow}>
+                    <View style={[styles.highlightDot, { backgroundColor: s.accent }]} />
+                    <Text style={styles.highlightText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+
               {isLastSlide && (
                 <View style={styles.privacySection}>
                   <TouchableOpacity
@@ -130,19 +164,16 @@ export function SwipeableOnboardingScreen(props: {
                       style={[
                         styles.checkbox,
                         agreePrivacy && styles.checkboxChecked,
+                        agreePrivacy && { borderColor: colors.accent },
                       ]}
                     >
-                      {agreePrivacy && (
-                        <Text style={styles.checkmark}>✓</Text>
-                      )}
+                      {agreePrivacy && <Text style={styles.checkmark}>OK</Text>}
                     </View>
                     <Text style={styles.privacyText}>
                       I agree to the{" "}
                       <Text
                         style={styles.privacyLink}
-                        onPress={() =>
-                          Linking.openURL("https://axyora.ai/privacy")
-                        }
+                        onPress={() => Linking.openURL("https://axyora.ai/privacy")}
                       >
                         Privacy Policy
                       </Text>
@@ -155,18 +186,16 @@ export function SwipeableOnboardingScreen(props: {
         ))}
       </ScrollView>
 
-      {/* Navigation Bottom */}
       <View style={styles.bottomNav}>
-        {/* Dots */}
         <View style={styles.dotsContainer}>
-          {dots.map((_, index) => {
+          {slides.map((_, index) => {
             const scale = dotAnimations[index].interpolate({
               inputRange: [0, 1],
-              outputRange: [1, 1.3],
+              outputRange: [1, 1.35],
             });
             const opacity = dotAnimations[index].interpolate({
               inputRange: [0, 1],
-              outputRange: [0.4, 1],
+              outputRange: [0.35, 1],
             });
             return (
               <Animated.View
@@ -176,7 +205,7 @@ export function SwipeableOnboardingScreen(props: {
                   {
                     transform: [{ scale }],
                     opacity,
-                    backgroundColor: slides[index].color,
+                    backgroundColor: slides[index].accent,
                   },
                 ]}
               />
@@ -184,9 +213,8 @@ export function SwipeableOnboardingScreen(props: {
           })}
         </View>
 
-        {/* Action Buttons */}
         <View style={styles.buttonRow}>
-          {currentIndex > 0 && (
+          {currentIndex > 0 && !isLastSlide && (
             <TouchableOpacity
               style={styles.buttonSecondary}
               onPress={() => goToSlide(currentIndex - 1)}
@@ -210,61 +238,120 @@ export function SwipeableOnboardingScreen(props: {
             disabled={isLastSlide && !agreePrivacy}
           >
             <Text style={styles.buttonTextPrimary}>
-              {isLastSlide ? "Get Started" : "Next"}
+              {isLastSlide ? "Create Account" : "Next"}
             </Text>
           </TouchableOpacity>
         </View>
+
+        {isLastSlide && (
+          <TouchableOpacity style={styles.secondaryLink} onPress={props.onComplete}>
+            <Text style={styles.secondaryLinkText}>Already have an account? Sign in</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </LinearGradient>
   );
 }
 
-// Dummy dots array for rendering
-const dots = Array(slides.length).fill(null);
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  topBar: {
+    paddingTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    alignItems: "flex-end",
+  },
+  skipButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadii.round,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  skipText: {
+    ...typography.body2,
+    color: colors.textSecondary,
   },
   slide: {
     width,
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.xl,
   },
   slideContent: {
     alignItems: "center",
-    gap: 24,
+    gap: spacing.lg,
+  },
+  iconWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    backgroundColor: "rgba(255,255,255,0.03)",
   },
   icon: {
-    fontSize: 64,
-    marginBottom: 12,
+    fontSize: 60,
+  },
+  iconLabel: {
+    fontSize: 14,
+    letterSpacing: 1.2,
+    fontWeight: "700",
   },
   title: {
-    fontSize: 28,
-    fontWeight: "800",
+    ...typography.h2,
     color: colors.text,
     textAlign: "center",
   },
   description: {
-    fontSize: 15,
+    ...typography.body2,
     color: colors.textMuted,
     textAlign: "center",
     lineHeight: 22,
+    paddingHorizontal: spacing.sm,
+  },
+  highlights: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
+    width: "100%",
+  },
+  highlightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadii.lg,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  highlightDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  highlightText: {
+    flex: 1,
+    ...typography.body3,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
   privacySection: {
-    marginTop: 20,
+    marginTop: spacing.lg,
     width: "100%",
   },
   checkboxRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
+    gap: spacing.sm,
   },
   checkbox: {
-    width: 24,
-    height: 24,
+    width: 22,
+    height: 22,
     borderRadius: 6,
     borderWidth: 2,
     borderColor: colors.accent,
@@ -276,7 +363,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   checkmark: {
-    color: "#06070B",
+    color: colors.textInverse,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -291,14 +378,14 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
   },
   bottomNav: {
-    paddingBottom: 24,
-    paddingHorizontal: 16,
-    gap: 16,
+    paddingBottom: spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
   },
   dotsContainer: {
     flexDirection: "row",
     justifyContent: "center",
-    gap: 8,
+    gap: spacing.sm,
   },
   dot: {
     width: 8,
@@ -307,37 +394,43 @@ const styles = StyleSheet.create({
   },
   buttonRow: {
     flexDirection: "row",
-    gap: 12,
+    gap: spacing.md,
     justifyContent: "center",
   },
   buttonSecondary: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadii.lg,
     borderWidth: 1,
     borderColor: colors.accent,
-    minWidth: 80,
+    minWidth: 88,
   },
   buttonText: {
     color: colors.accent,
-    fontSize: 14,
-    fontWeight: "600",
+    ...typography.button,
     textAlign: "center",
   },
   buttonPrimary: {
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadii.lg,
     backgroundColor: colors.accent,
-    minWidth: 100,
+    minWidth: 160,
   },
   buttonTextPrimary: {
-    color: "#06070B",
-    fontSize: 14,
-    fontWeight: "600",
+    color: colors.textInverse,
+    ...typography.button,
     textAlign: "center",
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  secondaryLink: {
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  secondaryLinkText: {
+    ...typography.body3,
+    color: colors.textSecondary,
   },
 });

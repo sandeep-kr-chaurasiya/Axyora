@@ -1,372 +1,173 @@
-# 🧠 Axyora - Your Personal AI Memory Companion
+# Axyora
 
-**Axyora** is an intelligent mobile and web application that helps you organize, search, and interact with your personal memories (photos, videos, documents). Powered by advanced AI, it understands context and provides instant, natural access to your digital life.
-
----
-
-## 🎯 Features
-
-✨ **AI-Powered Search**
-- Natural language queries ("Show me sunset photos from last summer")
-- Semantic understanding of images, videos, and documents
-- Multi-modal search across all media types
-
-📸 **Smart Memory Organization**
-- Automatic indexing of photos, videos, and documents
-- Intelligent classification and tagging
-- Privacy-first approach (on-device processing where possible)
-
-💬 **Conversational Interface**
-- Chat with your AI memory assistant
-- Natural responses that feel like talking to a personal assistant
-- Context-aware suggestions
-
-🔒 **Privacy & Security**
-- All data processed locally or securely
-- No unnecessary cloud storage
-- User-controlled data retention
+Axyora is a local-first AI memory engine with a premium React Native client and a FastAPI backend. It indexes your photos/documents locally, builds embeddings, and lets you chat with your own memory using natural language.
 
 ---
 
-## 📁 Project Structure
+## What’s Included
+
+- **Mobile app (Expo / React Native)**: onboarding → auth → permissions → discovery → processing → chat
+- **AI engine (FastAPI)**: ingestion, embeddings, vector search, Groq reasoning, local metadata storage
+- **Local-first design**: your files are processed on-device or locally, not uploaded by default
+
+---
+
+## Repository Structure
 
 ```
-📦 Axyora/
-├── 📱 mobile/              # React Native mobile app (iOS/Android)
-│   ├── src/
-│   │   ├── components/     # Premium UI components (PremiumButton, PremiumInput, MessageBubble, ChatImageGrid, etc.)
-│   │   ├── screens/        # App screens (Chat, Auth, Settings, Processing, Permissions, Onboarding)
-│   │   ├── hooks/          # Custom React hooks (useChat, useAuth, useIndexingQueue, useAppLifecycle)
-│   │   ├── services/       # API client and file services
-│   │   ├── theme/          # Design system (colors, spacing, animations, typography)
-│   │   ├── navigation/     # React Navigation setup
-│   │   └── types/          # TypeScript type definitions
-│   ├── package.json        # Dependencies
-│   ├── app.json            # Expo configuration
-│   └── tsconfig.json       # TypeScript config
-│
-├── 🤖 ai-engine/           # Python FastAPI backend
-│   ├── main.py             # FastAPI server entry point
-│   ├── query_engine.py     # LLM-powered query engine
-│   ├── vector_store.py     # Vector database (embeddings)
-│   ├── ingestion.py        # File ingestion pipeline
-│   ├── metadata_db.py      # Metadata storage
-│   ├── groq_client.py      # Groq LLM integration with response validation
-│   ├── local_storage.py    # Progress tracking storage
-│   ├── requirements.txt    # Python dependencies
-│   ├── production_config.py# Production environment config
-│   └── logs/               # Application logs
-│
-├── README.md               # This file
-├── .gitignore             # Git ignore rules
-└── deploy.sh              # Deployment automation script
+Axyora/
+├─ mobile/                 # React Native (Expo) app
+│  ├─ src/
+│  │  ├─ screens/          # App screens (Splash, Onboarding, Auth, Permissions, Discovery, Processing, Chat, Settings)
+│  │  ├─ components/       # UI components (MessageBubble, ChatImageGrid, etc.)
+│  │  ├─ hooks/            # Hooks (useAuth, useChat, useAppLifecycle)
+│  │  ├─ services/         # API client, queue, scanner
+│  │  ├─ theme/            # Design system (colors, spacing, animations, typography)
+│  │  └─ navigation/       # Navigation root
+│  ├─ App.tsx              # App entry
+│  └─ package.json
+├─ ai-engine/              # FastAPI backend
+│  ├─ main.py              # API entry + background pipeline
+│  ├─ embeddings.py        # Embedding engine (BGE)
+│  ├─ vector_store.py      # FAISS vector DB
+│  ├─ processor.py         # File processing (PDF/DOCX/TXT/Images/Audio)
+│  ├─ query_engine.py      # RAG pipeline
+│  └─ production_config.py # Environment/tuning settings
+└─ README.md
 ```
 
 ---
 
-## 🚀 Getting Started
+## Requirements
 
-### Prerequisites
+### Mobile
+- Node.js 18+
+- Expo CLI (via `npm`)
+- iOS Simulator / Android Emulator
 
-- **Node.js** 18+ & npm/yarn
-- **Python** 3.10+
-- **iOS/Android SDK** (for mobile development)
-- **Expo CLI** (`npm install -g expo-cli`)
+### AI Engine
+- Python 3.10+
+- `pip` / `venv`
+- (Optional) Groq API key for cloud reasoning
 
-### Installation
+---
 
-#### 1. Clone & Setup
+## Setup
 
-```bash
-git clone <repo-url>
-cd Axyora
-```
-
-#### 2. Mobile App Setup
+### 1) Mobile App
 
 ```bash
 cd mobile
 npm install
 ```
 
-#### 3. Backend Setup
+Create `.env.local` (or use `.env.example`) with Firebase + API base:
+
+```
+EXPO_PUBLIC_API_BASE_URL=http://localhost:8000
+EXPO_PUBLIC_FIREBASE_API_KEY=...
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+EXPO_PUBLIC_FIREBASE_APP_ID=...
+```
+
+Run:
+
+```bash
+npm run ios
+# or
+npm run android
+```
+
+### 2) AI Engine
 
 ```bash
 cd ai-engine
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+Optional env:
 
-## 🏃 Running the App
+```
+GROQ_API_KEY=...
+GROQ_MODEL=llama-3.3-70b-versatile
+```
 
-### Start Backend (AI Engine)
+Run:
 
 ```bash
-cd ai-engine
-source venv/bin/activate
 python main.py
 ```
 
-Backend runs on `http://localhost:8000`
+---
 
-### Start Mobile App (Development)
+## Core Flow
 
-```bash
-cd mobile
-npm start -- --dev-client
-```
-
-Then choose:
-- `i` for iOS simulator
-- `a` for Android emulator
-- Scan QR code with Expo Go app
+1. **Splash** → **Onboarding** → **Auth**
+2. **Permissions** (media access)
+3. **Discovery** (scan device) → **Processing** (queue + progress)
+4. **Chat** (natural language search + results)
 
 ---
 
-## 📱 Mobile App Architecture
+## Key Mobile Components
 
-### Design System (`src/theme/`)
-
-The app uses a **premium glassmorphic design** inspired by modern interfaces. Located in `src/theme/`:
-
-**Theme Files:**
-- `colors.ts` - Deep black background, purple-blue-cyan gradients, glassmorphic surfaces
-- `spacing.ts` - 8-step scale (4px → 48px), glass effects, shadow system, premium typography
-- `animations.ts` - 8+ predefined animations (fade, slide, scale, pulse, glow, shake, spin)
-- `index.ts` - Centralized theme export
-
-**Design Tokens:**
-- **Colors**: Deep black background (#0A0A0A), purple primary, glassmorphic surfaces
-- **Spacing**: Consistent xs (4px) through xxxl (48px)
-- **Typography**: Premium scale with letter spacing (h1-h4, body variants, captions)
-- **Shadows**: Soft elevation system (sm, md, lg, xl, glow)
-- **Glass Effects**: Light, medium, dark variants with blur
-
-### Key Screens
-
-1. **ChatScreen** - Main conversational interface with image results grid
-2. **AuthScreen** - Login/signup (Firebase integration)
-3. **SettingsScreen** - App configuration and data management
-4. **ProcessingScreen** - Real-time indexing progress
-5. **EnhancedPermissionsScreen** - Permission requests with clear explanations
-
-### Key Components
-
-- **MessageBubble** - Animated chat messages (user right, AI left)
-- **ChatImageGrid** - 3-column image grid with score badges
-- **PremiumButton** - 6+ variants with smooth animations
-- **PremiumInput** - Focus-animated text input with glass effect
-- **LoadingIndicators** - Skeleton, typing indicator, spinner
-
-### Hooks
-
-- **useChat** - Manage messages and conversation state
-- **useAuth** - Authentication state and login/logout
-- **useIndexingQueue** - File processing queue management
-- **useAppLifecycle** - App lifecycle events (resume, background)
+- `ChatScreen`: primary UI + message stream
+- `ChatImageGrid`: image results grid
+- `MessageBubble`: aligned chat bubbles
+- `ProcessingScreen`: queue and live progress
+- `SettingsScreen`: system stats + controls
 
 ---
 
-## 🤖 Backend (AI Engine)
+## Key Backend Components
 
-### Architecture
-
-**FastAPI Server** Processing pipeline:
-
-1. **File Ingestion** (`ingestion.py`)
-   - Accepts images, videos, documents
-   - Generates embeddings and metadata
-
-2. **Vector Store** (`vector_store.py`)
-   - Stores embeddings for semantic search
-   - Similarity-based retrieval
-
-3. **Query Engine** (`query_engine.py`)
-   - Processes natural language queries
-   - Retrieves relevant results (images, videos, documents)
-
-4. **LLM Integration** (`groq_client.py`)
-   - Generates conversational responses
-   - Validates and formats results
-
-5. **Metadata Database** (`metadata_db.py`)
-   - Stores file metadata
-   - Tracks processing status
-
-### API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/query` | POST | Search query with LLM |
-| `/process-file` | POST | Submit file for indexing |
-| `/status/{jobId}` | GET | Check processing status |
-| `/health` | GET | Service health check |
+- `processor.py`: file parsing and chunking
+- `embeddings.py`: vector embeddings
+- `vector_store.py`: similarity search
+- `query_engine.py`: RAG + reasoning
+- `groq_client.py`: cloud LLM (optional)
 
 ---
 
-## 💾 Data Flow
+## API Endpoints (AI Engine)
 
-```
-User Query (Mobile) 
-    ↓
-Chat API Client (React Query)
-    ↓
-FastAPI Backend
-    ↓
-Vector Store (Similarity Search)
-    ↓
-Retrieved Results + LLM Generated Response
-    ↓
-Chat Bubble Display + Image Grid
-```
+- `GET /health` – service health
+- `POST /process-file` – upload and index
+- `GET /status/{job_id}` – job state
+- `POST /query` – ask memory
+- `POST /search-images` – image search
+- `GET /index-stats?user_id=...` – user stats
+- `GET /stats/file-types/{user_id}` – file type stats
+- `DELETE /clear?user_id=...` – clear user data
 
 ---
 
-## 🔧 Development Guide
+## Troubleshooting
 
-### Adding a New Screen
-
-1. Create component in `mobile/src/screens/ScreenName.tsx`
-2. Use theme tokens: `colors`, `spacing`, `typography`, `shadows`, `borderRadii`
-3. Add to navigation in `src/navigation/AppNavigator.tsx`
-4. Use premium components: `PremiumButton`, `PremiumInput`, `PremiumCard`, etc.
-
-### Adding a New API Endpoint
-
-1. Create route in `ai-engine/main.py`
-2. Use existing services (query_engine, ingestion, etc.)
-3. Add response validation
-4. Update mobile API client in `mobile/src/services/apiClient.ts`
-
-### Styling
-
-- **Never hardcode colors** - Use `colors` from theme
-- **Never hardcode spacing** - Use `spacing` tokens
-- **Always use theme shadows** - `shadows.sm`, `shadows.md`, etc.
-- **Animate with theme** - Use predefined animations from `animations.ts`
+- **iOS build error**: run `npm run ios` again after `npm install`
+- **Metro errors**: `npm start -- --clear`
+- **No Groq responses**: set `GROQ_API_KEY`
+- **Slow indexing**: tune `PIPELINE_WORKERS` and `EMBED_BATCH_SIZE` in `ai-engine/production_config.py`
 
 ---
 
-## 🐛 Debugging
+## Performance Tuning
 
-### Mobile App Logs
+`ai-engine/production_config.py` includes knobs for:
+- Pipeline workers
+- Queue size
+- Embedding batch size
+- Cache TTL
 
-```bash
-# View Metro bundler logs
-npm start
-
-# View device logs (iOS)
-xcrun simctl spawn booted log stream --level=debug
-
-# React Native debugger
-npm start -- --dev-client
-```
-
-### Backend Logs
-
-```bash
-# Server logs
-tail -f ai-engine/logs/app.log
-
-# Request logging
-# Check query_engine.py for detailed logs
-```
+Adjust per device and test stability before production use.
 
 ---
 
-## 📦 Dependencies
-
-### Mobile
-- React Native 0.81+
-- React 19
-- Expo 54+
-- React Navigation 6+
-- AsyncStorage for persistence
-
-### Backend
-- FastAPI 0.100+
-- Python 3.10+
-- Pydantic for validation
-- Various ML/embeddings libraries
-
-See `mobile/package.json` and `ai-engine/requirements.txt` for full lists.
-
----
-
-## ✨ Premium UI Features
-
-- **Glassmorphism** - Semi-transparent surfaces with blur effects
-- **Smooth Animations** - All transitions use easing curves
-- **Soft Shadows** - Depth without hard borders
-- **Premium Typography** - Large, bold, letterspaced headings
-- **Interactive Feedback** - Scale animations on press, focus states
-- **Dark Mode Only** - Premium dark aesthetic throughout
-
----
-
-## 🚀 Deployment
-
-### Mobile
-- Build for iOS: `npm run ios`
-- Build for Android: `npm run android`
-- EAS Build for app store: `eas build --platform ios`
-
-### Backend
-- Docker: Create `Dockerfile` in `ai-engine/`
-- Cloud deployment: Firebase Cloud Run, AWS Lambda, etc.
-- Environment variables: Copy `.env.example` to `.env`
-
----
-
-## 📝 License
+## License
 
 Private / Proprietary
-
----
-
-## 👥 Contributing
-
-1. Ensure feature branches follow naming: `feature/feature-name`
-2. All code uses theme system (no hardcoded values)
-3. Components should be reusable
-4. Test on both iOS and Android
-5. Update documentation for breaking changes
-
----
-
-## 🎨 Recent Improvements
-
-### Chat Experience
-- ✅ Conversational AI responses with varied greetings
-- ✅ Image grid filtering (removes HEIC files not supported on simulator)
-- ✅ Max 6 images display with dynamic reflow
-- ✅ Proper message alignment (user right, AI left)
-- ✅ Smart response formatting matching actual displayed content
-
-### Code Quality
-- ✅ Removed unused components (Button.tsx, Input.tsx, SplashScreen.premium.tsx)
-- ✅ Cleaned up redundant documentation
-- ✅ Consolidated design system into single theme module
-- ✅ Fixed component exports (PremiumButton, PremiumInput, PremiumCard)
-
-### Backend
-- ✅ Enhanced LLM response validation with better inversion detection
-- ✅ Type-aware query matching
-- ✅ Legitimate "no results" detection
-
----
-
-## 📞 Support
-
-For issues or questions:
-- Check console output in Metro bundler (iOS): `npm start -- --dev-client`
-- Review server logs in `ai-engine/logs/app.log`
-- Check health endpoint: `curl http://localhost:8000/health`
-- Verify file paths in ChatImageGrid component for custom file loading
-
----
-
-**Built with ❤️ for your memories**

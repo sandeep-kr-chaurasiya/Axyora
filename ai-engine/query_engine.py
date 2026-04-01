@@ -11,11 +11,14 @@ Pipeline:
 from __future__ import annotations
 from typing import Dict, Any, List
 
+import time
+import re
 from context_builder import ContextBuilder
 from embeddings import EmbeddingEngine
 from vector_store import VectorStore
 from groq_client import GroqClient
 from logging_config import logger
+from production_config import QUERY_CACHE_TTL_SECONDS, QUERY_CACHE_MAX
 
 class QueryEngine:
 
@@ -23,6 +26,7 @@ class QueryEngine:
         self._embed = embedding_engine
         self._vs = vector_store
         self._cb = ContextBuilder(max_chunks=5)  # Enforce 3-5 chunks max (per spec)
+        self._answer_cache: dict[str, tuple[float, Dict[str, Any]]] = {}
         try:
             self._llm = GroqClient()
         except Exception as e:
@@ -47,6 +51,16 @@ class QueryEngine:
         }
         """
         try:
+            cache_key = f"{user_id}::{model}::{top_k}::{include_images}::{query.strip().lower()}"
+            cached = self._answer_cache.get(cache_key)
+            if cached:
+                ts, payload = cached
+                if time.time() - ts < QUERY_CACHE_TTL_SECONDS:
+                    logger.info("[QueryEngine] Cache hit for query")
+                    return payload
+                else:
+                    self._answer_cache.pop(cache_key, None)
+
             logger.info(f"[QueryEngine] Processing query: {query[:100]}")
             logger.info(f"[QueryEngine] User ID: {user_id}, top_k: {top_k}")
             
@@ -64,7 +78,10 @@ class QueryEngine:
                     "images": [],
                 }
 
-            # 2. Separate text and image results
+            # 2. Hybrid re-rank (vector + lightweight keyword overlap)
+            results = self._rerank_results(query, results)
+
+            # 3. Separate text and image results
             text_results = self._cb.extract_text_chunks_for_context(results)
             image_results = self._cb.extract_image_sources(results)
 
@@ -75,11 +92,11 @@ class QueryEngine:
                 for img in image_results:
                     logger.info(f"  - {img.get('file_name')}: uri={img.get('image_uri')}, score={img.get('score')}")
 
-            # 3. Build context from text chunks for LLM reasoning
+            # 4. Build context from text chunks for LLM reasoning
             context = self._cb.build_context(text_results) if text_results else ""
             sources = self._cb.extract_sources(text_results) if text_results else []
 
-            # 4. Cloud LLM Reasoning (Groq) — only with text context
+            # 5. Cloud LLM Reasoning (Groq) — only with text context
             answer = ""
             if context.strip():
                 if self._llm is not None:
@@ -102,6 +119,11 @@ class QueryEngine:
             }
             
             logger.info(f"[QueryEngine] Returning response with {len(final_response.get('images', []))} images")
+            if len(self._answer_cache) >= QUERY_CACHE_MAX:
+                # Drop oldest cache entry
+                oldest_key = min(self._answer_cache.keys(), key=lambda k: self._answer_cache[k][0])
+                self._answer_cache.pop(oldest_key, None)
+            self._answer_cache[cache_key] = (time.time(), final_response)
             return final_response
 
         except Exception as e:
@@ -186,6 +208,42 @@ class QueryEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        return [t for t in re.split(r"[^a-zA-Z0-9]+", text.lower()) if len(t) > 2]
+
+    def _rerank_results(self, query: str, results: list[dict]) -> list[dict]:
+        """Lightweight hybrid scoring: vector score + keyword overlap."""
+        if not results:
+            return results
+        query_terms = set(self._tokenize(query))
+        if not query_terms:
+            return results
+
+        def keyword_score(result: dict) -> float:
+            blob = " ".join([
+                str(result.get("text", "")),
+                str(result.get("caption", "")),
+                str(result.get("file_name", "")),
+                str(result.get("local_path", "")),
+            ])
+            tokens = set(self._tokenize(blob))
+            if not tokens:
+                return 0.0
+            overlap = len(tokens & query_terms)
+            return overlap / max(len(query_terms), 1)
+
+        scored: list[dict] = []
+        for r in results:
+            base = float(r.get("score", 0.0))
+            kw = keyword_score(r)
+            hybrid = (0.75 * base) + (0.25 * kw)
+            enriched = {**r, "hybrid_score": hybrid, "keyword_score": kw}
+            scored.append(enriched)
+
+        scored.sort(key=lambda r: r.get("hybrid_score", 0.0), reverse=True)
+        return scored
 
     def _build_sources(self, results: list[dict]) -> list[dict]:
         """Deduplicate and format source file cards for the UI."""

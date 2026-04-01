@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View, Image } from "react-native";
+import { Animated, StyleSheet, Text, View } from "react-native";
 import { colors, spacing, borderRadii, shadows, typography } from "../theme";
 
 export function MessageBubble(props: { role: "user" | "assistant"; text: string }) {
@@ -34,19 +34,8 @@ export function MessageBubble(props: { role: "user" | "assistant"; text: string 
         },
       ]}
     >
-      <View style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}>
-        {/* Axyora Logo for Assistant */}
-        {!isUser && (
-          <Image
-            source={require("../../Axyora transparent .png")}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-        )}
-
-        <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-          <Text style={styles.text}>{props.text}</Text>
-        </View>
+      <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+        <Text style={[styles.text, isUser && styles.userText]}>{props.text}</Text>
       </View>
     </Animated.View>
   );
@@ -57,23 +46,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     width: "100%",
     overflow: "hidden",
-  },
-  messageRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-  },
-  userRow: {
-    justifyContent: "flex-end",
-  },
-  assistantRow: {
-    justifyContent: "flex-start",
-  },
-  logoImage: {
-    width: 28,
-    height: 28,
-    marginBottom: spacing.xs,
   },
   userContainer: {
     alignItems: "flex-end",
@@ -89,20 +61,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   userBubble: {
-    // Premium purple/blue gradient feel
-    backgroundColor: colors.primary,
-    borderColor: colors.primaryLight,
+    backgroundColor: colors.accent,
+    borderColor: colors.primaryDark,
+    borderTopLeftRadius: borderRadii.md,
     ...shadows.md,
   },
   assistantBubble: {
-    // Premium glassmorphic dark
     backgroundColor: colors.surfaceGlass,
     borderColor: colors.border,
+    borderTopRightRadius: borderRadii.md,
     ...shadows.sm,
   },
   text: {
     ...typography.body,
     color: colors.text,
     lineHeight: 24,
+  },
+  userText: {
+    color: colors.textInverse,
   },
 });

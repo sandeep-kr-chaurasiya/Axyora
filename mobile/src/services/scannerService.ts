@@ -1,5 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import { getInfoAsync, readDirectoryAsync } from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
@@ -45,6 +46,24 @@ function fileTypeFromMime(mime: string): ScanType {
 
 function buildFingerprint(path: string, size: number, modifiedAt: number): string {
   return `${path}::${size}::${modifiedAt}`;
+}
+
+async function getFileSizeAsync(uri: string): Promise<number> {
+  try {
+    // Try new API first (might be available)
+    if ((FileSystem as any).getInfoAsync) {
+      const info = await getInfoAsync(uri);
+      if (info?.exists && typeof info.size === 'number') {
+        return info.size;
+      }
+    }
+  } catch (e) {
+    console.debug(`[Scanner] Could not get file size via getInfoAsync for ${uri}`, e);
+  }
+  
+  // Fallback: return 0 and let backend handle it
+  // This prevents blocking on deprecated API calls
+  return 0;
 }
 
 function isUploadableUri(uri: string): boolean {
@@ -145,28 +164,32 @@ export async function pickDocuments(): Promise<ScannableFile[]> {
     return [];
   }
 
-  return picked.assets
-    .map((asset) => {
+  const files: ScannableFile[] = [];
+  
+  for (const asset of picked.assets) {
     const resolvedUri = getPickerAssetUri(asset);
     if (!isUploadableUri(resolvedUri)) {
-      return null;
+      continue;
     }
+
+    const fileSize = await getFileSizeAsync(resolvedUri);
 
     const mimeType = asset.mimeType || extToMime(asset.name);
     const modifiedAt = Date.now();
-    return {
-      id: `${resolvedUri}-${asset.size ?? 0}`,
+    files.push({
+      id: `${resolvedUri}-${fileSize}`,
       uri: resolvedUri,
       name: asset.name,
       mimeType,
       type: fileTypeFromMime(mimeType),
-      size: Number(asset.size ?? 0),
+      size: fileSize,
       modifiedAt,
       location: resolvedUri,
-      fingerprint: buildFingerprint(resolvedUri, Number(asset.size ?? 0), modifiedAt),
-    } satisfies ScannableFile;
-  })
-    .filter((file): file is ScannableFile => Boolean(file));
+      fingerprint: buildFingerprint(resolvedUri, fileSize, modifiedAt),
+    } satisfies ScannableFile);
+  }
+  
+  return files;
 }
 
 export interface ScanProgress {
@@ -187,54 +210,83 @@ async function scanMediaAssets(
     onProgress({ phase: kind === "image" ? "scanning_images" : "scanning_audio", current: 0 });
   }
 
-  const page = await MediaLibrary.getAssetsAsync({
-    mediaType,
-    first,
-    sortBy: [[MediaLibrary.SortBy.modificationTime, false]],
-  });
-
-  const scanned = await Promise.all(
-    page.assets.map(async (asset, index) => {
-      const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
-      const resolvedUri =
-        assetInfo.localUri || (assetInfo as unknown as { uri?: string }).uri || asset.uri;
-
-      if (onProgress && index % 5 === 0) {
-        onProgress({
-          phase: kind === "image" ? "scanning_images" : "scanning_audio",
-          current: index + 1,
-          total: page.assets.length,
-          lastFile: asset.filename,
-        });
-      }
-
-      if (!isUploadableUri(resolvedUri)) {
-        return null;
-      }
-
-      const mimeType = asset.mediaType === "audio" ? "audio/mpeg" : "image/jpeg";
-      const modifiedAt = Number(asset.modificationTime ?? Date.now());
-      const size = Number((asset as unknown as { fileSize?: number }).fileSize ?? 0);
-      return {
-        id: asset.id,
-        uri: resolvedUri,
-        name: asset.filename || `${asset.id}.bin`,
-        mimeType,
-        type: kind,
-        size,
-        modifiedAt,
-        location: resolvedUri,
-        fingerprint: buildFingerprint(resolvedUri, size, modifiedAt),
-      } satisfies ScannableFile;
-    })
-  );
-
   const files: ScannableFile[] = [];
-  for (const file of scanned) {
-    if (file) {
-      files.push(file);
+  let totalFetched = 0;
+  let hasNextPage = true;
+  let endCursor: string | undefined;
+
+  // Paginate through ALL assets (handle 2000+ images/audio files)
+  while (hasNextPage && totalFetched < first) {
+    const pageSize = Math.min(100, first - totalFetched);
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType,
+      first: pageSize,
+      after: endCursor,
+      sortBy: [[MediaLibrary.SortBy.modificationTime, false]],
+    });
+
+    if (!page.assets || page.assets.length === 0) {
+      hasNextPage = false;
+      break;
     }
+
+    endCursor = page.endCursor;
+    hasNextPage = page.hasNextPage ?? false;
+
+    const scanned = await Promise.all(
+      page.assets.map(async (asset, index) => {
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
+        const resolvedUri =
+          assetInfo.localUri || (assetInfo as unknown as { uri?: string }).uri || asset.uri;
+
+        if (onProgress && (totalFetched + index) % 5 === 0) {
+          onProgress({
+            phase: kind === "image" ? "scanning_images" : "scanning_audio",
+            current: totalFetched + index + 1,
+            total: first,
+            lastFile: asset.filename,
+          });
+        }
+
+        if (!isUploadableUri(resolvedUri)) {
+          return null;
+        }
+
+        const mimeType = asset.mediaType === "audio" ? "audio/mpeg" : "image/jpeg";
+        const modifiedAt = Number(asset.modificationTime ?? Date.now());
+        
+        let size = 0;
+        try {
+          const fileInfo = await getInfoAsync(resolvedUri);
+          if (fileInfo && fileInfo.exists && typeof fileInfo.size === 'number') {
+            size = fileInfo.size;
+          }
+        } catch (e) {
+          console.warn(`[Scanner] Could not get file size for ${asset.filename}:`, e);
+        }
+        return {
+          id: asset.id,
+          uri: resolvedUri,
+          name: asset.filename || `${asset.id}.bin`,
+          mimeType,
+          type: kind,
+          size,
+          modifiedAt,
+          location: resolvedUri,
+          fingerprint: buildFingerprint(resolvedUri, size, modifiedAt),
+        } satisfies ScannableFile;
+      })
+    );
+
+    for (const file of scanned) {
+      if (file) {
+        files.push(file);
+      }
+    }
+
+    totalFetched += page.assets.length;
   }
+
   return files;
 }
 
@@ -243,7 +295,7 @@ async function walkDirectory(path: string, maxFiles: number, output: string[] = 
     return output;
   }
 
-  const entries = await FileSystem.readDirectoryAsync(path);
+  const entries = await readDirectoryAsync(path);
 
   for (const entry of entries) {
     if (output.length >= maxFiles) {
@@ -251,14 +303,18 @@ async function walkDirectory(path: string, maxFiles: number, output: string[] = 
     }
 
     const full = path.endsWith("/") ? `${path}${entry}` : `${path}/${entry}`;
-    const info = await FileSystem.getInfoAsync(full);
-    if (!info.exists) {
-      continue;
-    }
-    if (info.isDirectory) {
-      await walkDirectory(`${full}/`, maxFiles, output);
-    } else {
-      output.push(full);
+    try {
+      const info = await getInfoAsync(full);
+      if (!info.exists) {
+        continue;
+      }
+      if (info.isDirectory) {
+        await walkDirectory(`${full}/`, maxFiles, output);
+      } else {
+        output.push(full);
+      }
+    } catch {
+      // Ignore inaccessible files and continue scanning.
     }
   }
 
@@ -282,7 +338,7 @@ async function walkSafDirectory(uri: string, maxFiles: number, output: string[] 
     }
 
     try {
-      const info = await FileSystem.getInfoAsync(entryUri);
+      const info = await getInfoAsync(entryUri);
       if (!info.exists) {
         continue;
       }
@@ -339,7 +395,7 @@ export async function scanAppDocumentDirectory(
     }
 
     try {
-      const info = await FileSystem.getInfoAsync(root);
+      const info = await getInfoAsync(root);
       if (!info.exists || !info.isDirectory) {
         continue;
       }
@@ -405,7 +461,7 @@ export async function scanAppDocumentDirectory(
     }
 
     try {
-      const info = await FileSystem.getInfoAsync(path);
+      const info = await getInfoAsync(path);
       if (!info.exists || info.isDirectory) {
         continue;
       }
@@ -450,7 +506,7 @@ export async function scanDeviceFiles(options?: {
   const includeImages = options?.includeImages ?? true;
   const includeAudio = options?.includeAudio ?? true;
   const includeDocuments = options?.includeDocuments ?? true;
-  const mediaLimit = options?.mediaLimit ?? 100;
+  const mediaLimit = options?.mediaLimit ?? 2500;  // Scan up to 2500 photos/audio to handle large libraries
   const onProgress = options?.onProgress;
 
   const files: ScannableFile[] = [];

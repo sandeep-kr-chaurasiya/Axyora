@@ -8,7 +8,7 @@ import { AppNavigator } from "./src/navigation/AppNavigator";
 import { AuthScreen } from "./src/screens/AuthScreen";
 import { SwipeableOnboardingScreen } from "./src/screens/SwipeableOnboardingScreen";
 import { EnhancedPermissionsScreen } from "./src/screens/EnhancedPermissionsScreen";
-import { AutoIndexingScreen } from "./src/screens/AutoIndexingScreen";
+import { DiscoveryScreen } from "./src/screens/DiscoveryScreen";
 import { SplashScreen } from "./src/screens/SplashScreen";
 import { persistentQueue } from "./src/services/persistentQueue";
 import { colors } from "./src/theme/colors";
@@ -139,19 +139,22 @@ export default function App() {
           await AsyncStorage.setItem(PERMISSIONS_KEY, "1");
           setPermissionsDone(true);
         }}
+        onSkip={() => setPermissionsDone(true)}
       />
     );
   }
 
   if (!autoScanDone) {
     return (
-      <AutoIndexingScreen
-        onComplete={async (files) => {
+      <DiscoveryScreen
+        onStartProcessing={async (files) => {
           if (files.length > 0) {
             persistentQueue.enqueue(files);
           }
+          await AsyncStorage.setItem(AUTO_SCAN_KEY, JSON.stringify({ status: "complete", totalCount: files.length }));
           setAutoScanDone(true);
         }}
+        onSkip={() => setAutoScanDone(true)}
       />
     );
   }

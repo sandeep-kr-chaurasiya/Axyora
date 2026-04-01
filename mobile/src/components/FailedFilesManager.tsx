@@ -30,11 +30,11 @@ interface FailedFilesManagerProps {
   isLoading?: boolean;
 }
 
-const fileTypeIcons: Record<string, string> = {
-  image: '📸',
-  video: '🎬',
-  document: '📄',
-  audio: '🎵',
+const fileTypeLabels: Record<string, string> = {
+  image: 'IMG',
+  video: 'VID',
+  document: 'DOC',
+  audio: 'AUD',
 };
 
 const errorDescriptions: Record<string, string> = {
@@ -60,7 +60,7 @@ export function FailedFilesManager({
   if (failedFiles.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyEmoji, { fontFamily: fontFamily.bold }]}>✓</Text>
+        <Text style={[styles.emptyEmoji, { fontFamily: fontFamily.bold }]}>OK</Text>
         <Text style={[styles.emptyTitle, { fontFamily: fontFamily.bold }]}>No Failed Files</Text>
         <Text style={[styles.emptySubtitle, { fontFamily: fontFamily.regular }]}>
           All files processed successfully!
@@ -178,7 +178,7 @@ export function FailedFilesManager({
           <View key={file.id} style={styles.fileItem}>
             {/* File Icon & Type */}
             <View style={styles.fileIconContainer}>
-              <Text style={styles.fileIcon}>{fileTypeIcons[file.fileType] || '📁'}</Text>
+              <Text style={styles.fileIcon}>{fileTypeLabels[file.fileType] || 'FILE'}</Text>
             </View>
 
             {/* File Info */}
@@ -191,7 +191,7 @@ export function FailedFilesManager({
               {/* Error Info */}
               <View style={styles.errorBadge}>
                 <Text style={[styles.errorBadgeText, { fontFamily: fontFamily.regular }]}>
-                  ⚠️ {errorDescriptions[file.error] || file.error}
+                  {errorDescriptions[file.error] || file.error}
                 </Text>
               </View>
 
@@ -218,7 +218,7 @@ export function FailedFilesManager({
                 <View style={styles.detailCell}>
                   <Text style={[styles.detailLabel, { fontFamily: fontFamily.regular }]}>Retries</Text>
                   <Text style={[styles.detailValue, { fontFamily: fontFamily.medium }]}>
-                    {file.retryCount}{file.retryCount >= 3 ? ' 🔴' : ''}
+                    {file.retryCount}{file.retryCount >= 3 ? ' HIGH' : ''}
                   </Text>
                 </View>
               </View>
@@ -263,7 +263,7 @@ export function FailedFilesManager({
 
       {/* Tips Section */}
       <View style={styles.tipsSection}>
-        <Text style={[styles.tipsTitle, { fontFamily: fontFamily.bold }]}>💡 Tips</Text>
+        <Text style={[styles.tipsTitle, { fontFamily: fontFamily.bold }]}>Tips</Text>
         <Text style={[styles.tipText, { fontFamily: fontFamily.regular }]}>
           • Check internet connection before retrying{'\n'}
           • Remove corrupted files to speed up processing{'\n'}
@@ -289,7 +289,8 @@ const styles = StyleSheet.create({
     paddingBottom: 60,
   },
   emptyEmoji: {
-    fontSize: 80,
+    fontSize: 42,
+    letterSpacing: 2,
     marginBottom: 16,
   },
   emptyTitle: {
@@ -365,7 +366,10 @@ const styles = StyleSheet.create({
     borderRightColor: colors.borderLight,
   },
   fileIcon: {
-    fontSize: 32,
+    fontSize: 12,
+    letterSpacing: 1,
+    color: colors.textSecondary,
+    fontWeight: '700',
   },
 
   // File Info

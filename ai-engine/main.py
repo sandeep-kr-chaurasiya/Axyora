@@ -32,6 +32,11 @@ from production_config import (
     MAX_FILE_SIZE_BYTES,
     SUPPORTED_FILE_TYPES,
     JOB_RETENTION_SECONDS,
+    PIPELINE_WORKERS,
+    JOB_QUEUE_MAXSIZE,
+    EMBED_MAX_CONCURRENCY,
+    FILE_PROCESSING_TIMEOUT,
+    EMBEDDING_TIMEOUT,
 )
 from logging_config import logger
 
@@ -74,6 +79,7 @@ job_store: JobStore = None
 
 _job_queue: asyncio.Queue[dict] = None
 _workers: list[asyncio.Task] = []
+_embedding_semaphore: asyncio.Semaphore | None = None
 
 def get_embedding_engine():
     global _embedding_engine
@@ -127,14 +133,12 @@ def _queue_local_file(**kwargs):
         with open(kwargs["file_path"], "rb") as f:
             content = f.read()
             
-        asyncio.run_coroutine_threadsafe(
-            _job_queue.put({
-                "job_id": job_id, "file_bytes": content, "file_name": kwargs["file_name"],
-                "file_type": kwargs["file_type"], "user_id": kwargs["user_id"], 
-                "file_path": kwargs["file_path"], "modified_at": kwargs["modified_at"]
-            }),
-            asyncio.get_event_loop()
-        )
+        payload = {
+            "job_id": job_id, "file_bytes": content, "file_name": kwargs["file_name"],
+            "file_type": kwargs["file_type"], "user_id": kwargs["user_id"], 
+            "file_path": kwargs["file_path"], "modified_at": kwargs["modified_at"]
+        }
+        asyncio.run_coroutine_threadsafe(_job_queue.put(payload), asyncio.get_event_loop())
         job_store.create_job(job_id, kwargs["user_id"], kwargs["file_name"], kwargs["file_type"])
     except Exception as e:
         logger.error(f"Failed to queue local file {kwargs['file_path']}", error=e)
@@ -148,9 +152,29 @@ def _update_job(job_id: str, **kwargs):
 # ---------------------------------------------------------------------------
 
 async def _job_worker(worker_id: int):
+    """Process jobs from the queue with robust error handling."""
     while True:
-        payload = await _job_queue.get()
-        job_id = payload["job_id"]
+        try:
+            if _job_queue is None:
+                logger.error(f"Worker {worker_id}: Queue not initialized, waiting...")
+                await asyncio.sleep(1)
+                continue
+                
+            payload = await _job_queue.get()
+        except asyncio.CancelledError:
+            logger.info(f"Worker {worker_id} cancelled")
+            break
+        except Exception as exc:
+            logger.error(f"Worker {worker_id} failed to get item from queue", error=exc)
+            await asyncio.sleep(1)
+            continue
+            
+        job_id = payload.get("job_id")
+        if not job_id:
+            logger.error(f"Worker {worker_id}: Payload missing job_id", error=payload)
+            _job_queue.task_done()
+            continue
+            
         try:
             logger.job_started(job_id, payload["user_id"], payload["file_name"], payload["file_type"])
             await _run_pipeline(**payload)
@@ -158,13 +182,15 @@ async def _job_worker(worker_id: int):
             logger.error(f"Worker {worker_id} job {job_id} failed", error=exc)
             _update_job(job_id, status="error", current_step="Pipeline Error", error=str(exc)[:500], completed_at=time.time())
         finally:
-            _job_queue.task_done()
+            try:
+                _job_queue.task_done()
+            except Exception as exc:
+                logger.error(f"Worker {worker_id}: Error calling task_done()", error=exc)
             gc.collect()
             if torch is not None and hasattr(torch, "backends") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
 
 async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_path, modified_at=None):
-    loop = asyncio.get_event_loop()
     start_time = time.time()
     local_storage = get_local_storage()
     try:
@@ -173,7 +199,10 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
         
         registry = get_index_registry()
         _update_job(job_id, progress=20, current_step="Extracting text...")
-        result = await loop.run_in_executor(None, process_file_bytes, file_bytes, file_name, file_type, file_path)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(process_file_bytes, file_bytes, file_name, file_type, file_path),
+            timeout=FILE_PROCESSING_TIMEOUT
+        )
         
         # Handle both old format (list) and new format (tuple with image metadata)
         if isinstance(result, tuple):
@@ -188,7 +217,13 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
         _update_job(job_id, progress=50, current_step=f"Embedding {len(chunks)} chunks...")
         engine = get_embedding_engine()
         texts = [c["text"] for c in chunks]
-        embeddings = await loop.run_in_executor(None, engine.embed_batch, texts)
+        if _embedding_semaphore is None:
+            raise RuntimeError("Embedding semaphore not initialized")
+        async with _embedding_semaphore:
+            embeddings = await asyncio.wait_for(
+                asyncio.to_thread(engine.embed_batch, texts),
+                timeout=EMBEDDING_TIMEOUT
+            )
 
         _update_job(job_id, progress=80, current_step="Persisting memory...")
         v_store = get_vector_store()
@@ -243,12 +278,14 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global job_store, _job_queue, _workers
+    global job_store, _job_queue, _workers, _embedding_semaphore
     logger.info("Axyora AI Engine starting...")
     
     job_store = JobStore()
-    _job_queue = asyncio.Queue()
-    _workers = [asyncio.create_task(_job_worker(1))]
+    _job_queue = asyncio.Queue(maxsize=JOB_QUEUE_MAXSIZE)
+    _embedding_semaphore = asyncio.Semaphore(max(1, EMBED_MAX_CONCURRENCY))
+    worker_count = max(1, PIPELINE_WORKERS)
+    _workers = [asyncio.create_task(_job_worker(i + 1)) for i in range(worker_count)]
     
     ingestion = get_ingestion_engine()
     ingestion.scan_directory()
@@ -262,6 +299,34 @@ async def lifespan(app: FastAPI):
     if _vector_store: _vector_store.persist()
 
 app = FastAPI(title="Axyora AI Engine", lifespan=lifespan)
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
+    request.state.request_id = request_id
+    start = time.time()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "Request failed",
+            error=exc,
+            request_id=request_id,
+            path=request.url.path,
+            method=request.method,
+        )
+        raise
+    duration_ms = int((time.time() - start) * 1000)
+    logger.info(
+        "Request completed",
+        request_id=request_id,
+        path=request.url.path,
+        method=request.method,
+        status=response.status_code,
+        duration_ms=duration_ms,
+    )
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -279,9 +344,84 @@ app.add_middleware(
 async def health():
     return {"status": "ok", "vectors": get_vector_store().total_vectors()}
 
+@app.get("/metrics")
+async def metrics():
+    processing_jobs = job_store.get_processing_jobs() if job_store else []
+    status_counts: dict[str, int] = {}
+    for job in processing_jobs:
+        status = job.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return {
+        "queue_size": _job_queue.qsize() if _job_queue else 0,
+        "queue_maxsize": _job_queue.maxsize if _job_queue else 0,
+        "worker_count": len(_workers),
+        "embedding_concurrency": EMBED_MAX_CONCURRENCY,
+        "processing_jobs": len(processing_jobs),
+        "status_counts": status_counts,
+        "timestamp": time.time(),
+    }
+
+@app.get("/current-processing")
+async def get_current_processing(user_id: str = Query(...)):
+    """Get the file currently being processed for a user"""
+    processing_jobs = job_store.get_processing_jobs() if job_store else []
+    
+    # Find the most recent processing job for this user
+    user_job = None
+    for job in processing_jobs:
+        if job.get("user_id") == user_id:
+            user_job = job
+            break
+    
+    if not user_job:
+        return {
+            "current_file": None,
+            "queue_size": _job_queue.qsize() if _job_queue else 0,
+            "total_processed": 0,
+            "total_in_queue": 0,
+            "total_failed": 0,
+        }
+    
+    # Get user's job stats
+    try:
+        user_jobs = job_store.get_user_jobs(user_id, limit=5000) if job_store else []
+        total_done = sum(1 for j in user_jobs if j.get("status") == "done")
+        total_failed = sum(1 for j in user_jobs if j.get("status") == "error")
+        total_pending = sum(1 for j in user_jobs if j.get("status") == "pending")
+    except Exception as e:
+        logger.error("Failed to compute job stats", error=e, user_id=user_id)
+        total_done = 0
+        total_failed = 0
+        total_pending = 0
+    
+    queue_size = _job_queue.qsize() if _job_queue else 0
+    
+    return {
+        "current_file": {
+            "job_id": user_job.get("job_id"),
+            "file_name": user_job.get("file_name", "Unknown"),
+            "file_type": user_job.get("file_type", "unknown"),
+            "status": user_job.get("status", "processing"),
+            "current_step": user_job.get("current_step", "Processing"),
+            "progress": user_job.get("progress", 0),
+            "created_at": user_job.get("created_at"),
+        },
+        "queue_size": queue_size,
+        "total_processed": total_done,
+        "total_in_queue": total_pending + queue_size,
+        "total_failed": total_failed,
+    }
+
 @app.get("/index-stats")
 async def index_stats(user_id: str = Query(...)):
-    return get_vector_store().user_stats(user_id)
+    stats = get_vector_store().user_stats(user_id)
+    try:
+        jobs = job_store.get_user_jobs(user_id, limit=5000) if job_store else []
+        processed_files = sum(1 for j in jobs if j.get("status") == "done")
+        stats["processed_files"] = processed_files
+    except Exception as e:
+        logger.error("Failed to compute processed_files", error=e, user_id=user_id)
+    return stats
 
 @app.post("/scan")
 async def scan(req: ScanRequest):
@@ -316,11 +456,15 @@ async def process_file(
         raise HTTPException(status_code=415, detail="Unsupported file type")
     
     job = job_store.create_job(job_id, user_id, file.filename, file_type)
-    await _job_queue.put({
-        "job_id": job_id, "file_bytes": content, "file_name": file.filename,
-        "file_type": file_type, "user_id": user_id, "file_path": file_path or file.filename,
-        "modified_at": modified_at
-    })
+    try:
+        _job_queue.put_nowait({
+            "job_id": job_id, "file_bytes": content, "file_name": file.filename,
+            "file_type": file_type, "user_id": user_id, "file_path": file_path or file.filename,
+            "modified_at": modified_at
+        })
+    except asyncio.QueueFull:
+        job_store.update_job(job_id, status="error", current_step="Queue full", error="Queue capacity reached")
+        raise HTTPException(status_code=429, detail="Processing queue is full. Try again shortly.")
     return job
 
 @app.post("/ask")
@@ -337,7 +481,7 @@ async def ask_standalone(req: AskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/query")
-async def query(req: QueryRequest):
+async def query(req: QueryRequest, request: Request):
     """Query indexed documents with cloud Groq reasoning."""
     # Validate user_id to prevent unauthorized access
     if not req.user_id or len(req.user_id) > 100:
@@ -345,17 +489,21 @@ async def query(req: QueryRequest):
     
     try:
         start = time.time()
+        logger.query_started(req.user_id, req.query)
         logger.info(f"[Query] Groq request: {req.query[:40]}... (user={req.user_id[:20]})")
         
         # Limit top_k to reasonable range (3-20)
         effective_top_k = max(1, min(req.top_k, 20))
         
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, get_query_engine().answer, req.query, req.user_id, effective_top_k, req.model
+        result = await asyncio.to_thread(
+            get_query_engine().answer, req.query, req.user_id, effective_top_k, req.model
         )
-        return {**result, "duration_ms": int((time.time() - start) * 1000)}
+        duration_ms = int((time.time() - start) * 1000)
+        logger.query_completed(req.user_id, duration_ms, bool(result.get("fallback")))
+        return {**result, "duration_ms": duration_ms}
     except Exception as e:
-        logger.error("Query failed", error=e)
+        logger.query_failed(req.user_id, e)
+        logger.error("Query failed", error=e, request_id=getattr(request.state, "request_id", None))
         raise HTTPException(status_code=500, detail="Reasoning engine failed.")
 
 @app.post("/search-images")
@@ -372,8 +520,8 @@ async def search_images(req: QueryRequest):
         # Limit top_k to reasonable range (3-20)
         effective_top_k = max(1, min(req.top_k, 20))
         
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, get_query_engine().search_images, req.query, req.user_id, effective_top_k
+        result = await asyncio.to_thread(
+            get_query_engine().search_images, req.query, req.user_id, effective_top_k
         )
         return {**result, "duration_ms": int((time.time() - start) * 1000)}
     except Exception as e:

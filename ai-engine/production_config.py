@@ -18,6 +18,20 @@ IMAGE_CAPTION_MAX_NEW_TOKENS = int(os.getenv("IMAGE_CAPTION_MAX_NEW_TOKENS", 24)
 MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", 5))
 CONTEXT_RELEVANCE_THRESHOLD = float(os.getenv("CONTEXT_RELEVANCE_THRESHOLD", 0.1))
 
+# Pipeline performance
+PIPELINE_WORKERS = int(os.getenv("PIPELINE_WORKERS", "1"))
+JOB_QUEUE_MAXSIZE = int(os.getenv("JOB_QUEUE_MAXSIZE", "200"))
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "48"))
+EMBED_MAX_CONCURRENCY = int(os.getenv("EMBED_MAX_CONCURRENCY", "2"))
+
+# Query cache
+QUERY_CACHE_TTL_SECONDS = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "30"))
+QUERY_CACHE_MAX = int(os.getenv("QUERY_CACHE_MAX", "256"))
+
+# Embedding cache
+EMBED_QUERY_CACHE_MAX = int(os.getenv("EMBED_QUERY_CACHE_MAX", "1000"))
+EMBED_TEXT_CACHE_MAX = int(os.getenv("EMBED_TEXT_CACHE_MAX", "2000"))
+
 # Supported file types
 SUPPORTED_FILE_TYPES = {"pdf", "docx", "txt", "image", "audio"}
 

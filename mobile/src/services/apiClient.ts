@@ -1,6 +1,8 @@
 import { auth } from "./firebase";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system";
+import { readAsStringAsync } from "expo-file-system/legacy";
 
 // API timeout constants (ms)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -51,6 +53,32 @@ export interface QueryResponse {
   images?: ImageResult[];
   duration_ms: number;
   fallback: boolean;
+}
+
+export interface EngineMetrics {
+  queue_size: number;
+  queue_maxsize: number;
+  worker_count: number;
+  embedding_concurrency: number;
+  processing_jobs: number;
+  status_counts?: Record<string, number>;
+  timestamp?: number;
+}
+
+export interface CurrentProcessingInfo {
+  current_file: {
+    job_id: string;
+    file_name: string;
+    file_type: string;
+    status: string;
+    current_step: string;
+    progress: number;
+    created_at?: number;
+  } | null;
+  queue_size: number;
+  total_processed: number;
+  total_in_queue: number;
+  total_failed: number;
 }
 
 interface AiJobStatusResponse {
@@ -188,19 +216,19 @@ async function authedFetch(
   const headers = await authHeaders(init?.headers);
   const candidates = getCandidateBaseUrls();
   const prioritized = [API_BASE_URL, ...candidates.filter((url) => url !== API_BASE_URL)];
-  console.log(`[API] 🌐 Attempting ${path} on candidates:`, prioritized);
+  console.log(`[API] Attempting ${path} on candidates:`, prioritized);
   let lastNetworkErr: NetworkError | null = null;
 
   for (const baseUrl of prioritized) {
     const url = `${baseUrl}${path}`;
     try {
-      console.log(`[API] 🔄 Trying ${url}...`);
+      console.log(`[API] Trying ${url}...`);
       const res = await fetchWithTimeout(url, { ...init, headers }, timeoutMs);
-      console.log(`[API] ✅ Success on ${baseUrl}, status=${res.status}`);
+      console.log(`[API] Success on ${baseUrl}, status=${res.status}`);
       API_BASE_URL = baseUrl;
       return res;
     } catch (error) {
-      console.warn(`[API] ⚠️ Failed on ${baseUrl}:`, error instanceof Error ? error.message : error);
+      console.warn(`[API] Failed on ${baseUrl}:`, error instanceof Error ? error.message : error);
       const networkErr = classifyNetworkError(error);
       lastNetworkErr = networkErr;
 
@@ -211,7 +239,7 @@ async function authedFetch(
   }
 
   const tried = prioritized.join(", ");
-  console.error(`[API] 🚨 Could not reach backend after trying: ${tried}`);
+  console.error(`[API] Could not reach backend after trying: ${tried}`);
   throw new NetworkError(
     lastNetworkErr?.code || "NETWORK_ERROR",
     true,
@@ -234,6 +262,43 @@ export function getResolvedApiBaseUrl(): string {
 export async function checkEngineHealth(): Promise<boolean> {
   const res = await authedFetch("/health", undefined, 8000);
   return res.ok;
+}
+
+export async function getEngineMetrics(): Promise<EngineMetrics | null> {
+  const res = await authedFetch("/metrics", undefined, 8000);
+
+  // Some engine builds do not expose /metrics; treat 404/501 as "metrics unavailable" instead of an error
+  if (res.status === 404 || res.status === 501) {
+    return null;
+  }
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function getCurrentProcessing(userId: string): Promise<CurrentProcessingInfo> {
+  const res = await authedFetch(`/current-processing?user_id=${encodeURIComponent(userId)}`, undefined, 8000);
+
+  if (res.status === 404 || res.status === 501) {
+    return {
+      current_file: null,
+      queue_size: 0,
+      total_processed: 0,
+      total_in_queue: 0,
+      total_failed: 0,
+    };
+  }
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+  }
+
+  return res.json();
 }
 
 /**
@@ -303,34 +368,48 @@ export async function submitFileForProcessing(params: {
 }): Promise<ProcessingJob> {
   const userId = requireUserId();
   const resolvedJobId = params.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log(`[API:submitFile] 📝 Preparing file: ${params.fileName} (jobId: ${resolvedJobId}, mimeType: ${params.mimeType})`);
+  console.log(`[API:submitFile] Preparing file: ${params.fileName} (jobId: ${resolvedJobId}, mimeType: ${params.mimeType})`);
 
-  const form = new FormData();
-  const fileBlob = {
-    uri: params.fileUri,
-    name: params.fileName,
-    type: params.mimeType,
-  } as any;
+  try {
+    // Read file data as base64 from the URI
+    console.log(`[API:submitFile] Reading file from: ${params.fileUri}`);
+    const base64Data = await readAsStringAsync(params.fileUri, {
+      encoding: "base64" as any,
+    });
 
-  form.append("file", fileBlob);
-  form.append("user_id", userId);
-  form.append("job_id", resolvedJobId);
-  form.append("file_path", params.filePath);
+    // Create FormData with properly formatted file
+    const form = new FormData();
+    const fileBlob = {
+      uri: params.fileUri,
+      name: params.fileName,
+      type: params.mimeType,
+    } as any;
 
-  if (typeof params.modifiedAt === "number") {
-    form.append("modified_at", String(params.modifiedAt));
+    console.log(`[API:submitFile] File size: ${base64Data.length} bytes (base64)`);
+    form.append("file", fileBlob);
+    form.append("user_id", userId);
+    form.append("job_id", resolvedJobId);
+    form.append("file_path", params.filePath);
+
+    if (typeof params.modifiedAt === "number") {
+      form.append("modified_at", String(params.modifiedAt));
+    }
+
+    console.log(`[API:submitFile] Uploading to /process-file endpoint...`);
+    const data = await makeRequest<AiJobStatusResponse>(
+      () => authedFetch("/process-file", { method: "POST", body: form }, UPLOAD_TIMEOUT),
+      1 // Only 1 retry for uploads
+    );
+    console.log(`[API:submitFile] File submission successful, got jobId: ${data.job_id}`);
+
+    return {
+      jobId: data.job_id,
+      status: data.status,
+    };
+  } catch (error) {
+    console.error(`[API:submitFile] Upload failed:`, error);
+    throw error;
   }
-
-  const data = await makeRequest<AiJobStatusResponse>(
-    () => authedFetch("/process-file", { method: "POST", body: form }, UPLOAD_TIMEOUT),
-    1 // Only 1 retry for uploads
-  );
-  console.log(`[API:submitFile] ✅ File submission successful, got jobId: ${data.job_id}`);
-
-  return {
-    jobId: data.job_id,
-    status: data.status,
-  };
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {

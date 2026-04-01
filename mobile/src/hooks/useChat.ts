@@ -8,6 +8,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   createdAt: number;
+  durationMs?: number;
   sources?: SourceResult[];
   images?: ImageResult[];
   fallback?: boolean;
@@ -27,11 +28,11 @@ const CASUAL_GREETINGS = [
 ];
 
 const IMAGE_RESPONSES = [
-  (count: number) => `Found ${count} amazing image${count !== 1 ? "s" : ""} for you! 📸`,
-  (count: number) => `I dug up ${count} image${count !== 1 ? "s" : ""} from your memories! 🎯`,
-  (count: number) => `Here are ${count} image${count !== 1 ? "s" : ""} that match! 🖼️`,
-  (count: number) => `Got ${count} perfect match${count !== 1 ? "es" : ""} for you! ✨`,
-  (count: number) => `Pulled up ${count} image${count !== 1 ? "s" : ""} for you! 🔍`,
+  (count: number) => `Found ${count} image${count !== 1 ? "s" : ""} for you.`,
+  (count: number) => `I dug up ${count} image${count !== 1 ? "s" : ""} from your memories.`,
+  (count: number) => `Here are ${count} image${count !== 1 ? "s" : ""} that match.`,
+  (count: number) => `Got ${count} match${count !== 1 ? "es" : ""} for you.`,
+  (count: number) => `Pulled up ${count} image${count !== 1 ? "s" : ""} for you.`,
 ];
 
 const GREETING_RESPONSES = {
@@ -44,6 +45,15 @@ const GREETING_RESPONSES = {
   textSearch: (preview: string) =>
     `${CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)]}! I found this in your memory:\n\n${preview}`,
 };
+
+function countDisplayImages(images?: ImageResult[]) {
+  if (!images || images.length === 0) return 0;
+  return images.filter((img) => {
+    const name = img.file_name?.toLowerCase() || "";
+    if (name.endsWith(".heic")) return false;
+    return Boolean(img.image_uri);
+  }).length;
+}
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -153,13 +163,13 @@ export function useChat() {
       if (!answerText || answerText.includes("no memory")) {
         const greeting = CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)];
         answerText = GREETING_RESPONSES.noResults(greeting);
-      } else if (response.images?.length && !response.sources?.length) {
+      }
+      const displayImageCount = countDisplayImages(response.images);
+      if (displayImageCount > 0 && !response.sources?.length) {
         // Only images found - use friendly conversational response
         console.log(`[Chat] Images found without sources`);
-        // Estimate valid images (accounting for HEIC filtering, typically ~40-50% HEIC)
-        const estimatedValidCount = Math.max(1, Math.ceil(response.images.length * 0.6));
-        answerText = GREETING_RESPONSES.imageSearch(estimatedValidCount);
-      } else if (response.images?.length && response.sources?.length) {
+        answerText = GREETING_RESPONSES.imageSearch(displayImageCount);
+      } else if (displayImageCount > 0 && response.sources?.length) {
         // Both found - use original answer with greeting prefix
         const greeting = CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)];
         answerText = `${greeting}! ${response.answer}`;
@@ -170,6 +180,7 @@ export function useChat() {
         role: "assistant",
         text: answerText,
         createdAt: Date.now(),
+        durationMs: typeof response.duration_ms === "number" ? response.duration_ms : undefined,
         sources: response.sources,
         images: response.images,
         fallback: response.fallback,
@@ -183,7 +194,7 @@ export function useChat() {
       const assistantMessage: ChatMessage = {
         id: `${Date.now()}-e`,
         role: "assistant",
-        text: `Oops! 😅 Something went wrong: ${errorMessage}. Please try again.`,
+        text: `Something went wrong: ${errorMessage}. Please try again.`,
         createdAt: Date.now(),
         chatId: currentChatId,
       };

@@ -1,11 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import {
-  View,
-  StyleSheet,
-  Animated,
-  Text,
-  SafeAreaView,
-} from "react-native";
+import { StyleSheet, Animated, SafeAreaView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
 import { typography, spacing } from "../theme/spacing";
@@ -18,6 +12,7 @@ interface SplashScreenProps {
 export function SplashScreen({ onComplete }: SplashScreenProps = {}) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
@@ -33,6 +28,21 @@ export function SplashScreen({ onComplete }: SplashScreenProps = {}) {
       }),
     ]).start();
 
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, {
+          toValue: 1,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowAnim, {
+          toValue: 0,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
     const timer = setTimeout(() => {
       onComplete?.();
     }, 2000);
@@ -42,9 +52,21 @@ export function SplashScreen({ onComplete }: SplashScreenProps = {}) {
 
   return (
     <LinearGradient
-      colors={["#06070B", "#0A1021", "#071622"]}
+      colors={["#050505", "#0B1418", "#07110E"]}
       style={styles.container}
     >
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.glow,
+          {
+            opacity: glowAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.25, 0.6],
+            }),
+          },
+        ]}
+      />
       <SafeAreaView style={styles.content}>
         <Animated.View
           style={[
@@ -58,26 +80,12 @@ export function SplashScreen({ onComplete }: SplashScreenProps = {}) {
           <AnimatedLogo />
         </Animated.View>
 
-        <Animated.Text
-          style={[
-            styles.title,
-            {
-              opacity: fadeAnim,
-            },
-          ]}
-        >
+        <Animated.Text style={[styles.title, { opacity: fadeAnim }]}>
           Axyora
         </Animated.Text>
 
-        <Animated.Text
-          style={[
-            styles.tagline,
-            {
-              opacity: fadeAnim,
-            },
-          ]}
-        >
-          Privacy-first AI Memory
+        <Animated.Text style={[styles.tagline, { opacity: fadeAnim }]}>
+          Your AI Memory Engine
         </Animated.Text>
       </SafeAreaView>
     </LinearGradient>
@@ -87,6 +95,16 @@ export function SplashScreen({ onComplete }: SplashScreenProps = {}) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  glow: {
+    position: "absolute",
+    top: -120,
+    left: -40,
+    right: -40,
+    height: 300,
+    borderBottomLeftRadius: 240,
+    borderBottomRightRadius: 240,
+    backgroundColor: "rgba(16, 185, 129, 0.12)",
   },
   content: {
     flex: 1,
@@ -101,7 +119,7 @@ const styles = StyleSheet.create({
     ...typography.h1,
     color: colors.text,
     fontWeight: "900",
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
   },
   tagline: {
     ...typography.body,

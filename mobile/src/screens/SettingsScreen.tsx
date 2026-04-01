@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from "@react-navigation/native";
 import {
   StyleSheet,
   Text,
@@ -14,7 +14,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors } from "../theme/colors";
-import { fontFamily } from "../theme/fonts";
+import { spacing, borderRadii, shadows } from "../theme/spacing";
+import { typography, fontFamily } from "../theme/fonts";
+import { useAuth } from "../hooks/useAuth";
+import { getSettings, updateSettings, clearIndex } from "../services/apiClient";
+import { CloseIcon } from "../components/Icons";
 
 export function SettingsScreen(props: {
   onReindex?: () => void;
@@ -23,56 +27,47 @@ export function SettingsScreen(props: {
   onLogout?: () => void;
   onClose: () => void;
 }) {
+  const { user } = useAuth();
   const [clearing, setClearing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [storageOptimization, setStorageOptimization] = useState(true);
   const [backgroundProcessing, setBackgroundProcessing] = useState(true);
   const [autoIndex, setAutoIndex] = useState(true);
   const [encryptionEnabled, setEncryptionEnabled] = useState(true);
-  const [devMode, setDevMode] = useState(false);
+  const [biometricLock, setBiometricLock] = useState(false);
+  const [lowPowerMode, setLowPowerMode] = useState(false);
   const [stats, setStats] = useState({
-    indexedFiles: 0,
-    totalMemorySize: '0 MB',
-    processingTime: '0 ms',
+    pending: 0,
   });
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   useEffect(() => {
-    const loadRealStats = async () => {
-      try {
-        const res = await fetch("http://localhost:8000/index-stats");
-        const data = await res.json();
+    setStats({ pending: 0 });
+  }, [user?.uid]);
 
-        setStats({
-          indexedFiles: data.total_files || 0,
-          totalMemorySize: data.total_size || '0 MB',
-          processingTime: data.avg_query_time
-            ? `${data.avg_query_time} ms`
-            : '0 ms',
-        });
+  useEffect(() => {
+    const loadSettings = async () => {
+      setSettingsLoading(true);
+      try {
+        const data = await getSettings();
+        if (typeof data?.storageOptimization === "boolean") setStorageOptimization(data.storageOptimization);
+        if (typeof data?.backgroundProcessing === "boolean") setBackgroundProcessing(data.backgroundProcessing);
+        if (typeof data?.autoIndex === "boolean") setAutoIndex(data.autoIndex);
+        if (typeof data?.lowPowerMode === "boolean") setLowPowerMode(data.lowPowerMode);
+        if (typeof data?.encryptionEnabled === "boolean") setEncryptionEnabled(data.encryptionEnabled);
+        if (typeof data?.biometricLock === "boolean") setBiometricLock(data.biometricLock);
       } catch (e) {
-        console.log("Failed to load stats", e);
+        console.warn("Failed to load settings", e);
+      } finally {
+        setSettingsLoading(false);
       }
     };
-
-    loadRealStats();
+    void loadSettings();
   }, []);
 
   useFocusEffect(
     React.useCallback(() => {
-      const refresh = async () => {
-        try {
-          const res = await fetch("http://localhost:8000/index-stats");
-          const data = await res.json();
-          setStats({
-            indexedFiles: data.total_files || 0,
-            totalMemorySize: data.total_size || '0 MB',
-            processingTime: data.avg_query_time
-              ? `${data.avg_query_time} ms`
-              : '0 ms',
-          });
-        } catch {}
-      };
-      refresh();
+      setStats({ pending: 0 });
     }, [])
   );
 
@@ -89,7 +84,7 @@ export function SettingsScreen(props: {
             setClearing(true);
             try {
               await props.onClearData?.();
-              await fetch("http://localhost:8000/clear", { method: "DELETE" });
+              await clearIndex();
               Alert.alert("Success", "All data cleared");
             } catch (err) {
               Alert.alert("Error", "Failed to clear data");
@@ -126,360 +121,180 @@ export function SettingsScreen(props: {
     );
   };
 
-  const handlePrivacyPolicy = () => {
-    Linking.openURL("https://axyora.ai/privacy");
-  };
+  const handlePrivacyPolicy = () => Linking.openURL("https://axyora.ai/privacy");
+  const handleTermsOfService = () => Linking.openURL("https://axyora.ai/terms");
 
-  const handleTermsOfService = () => {
-    Linking.openURL("https://axyora.ai/terms");
-  };
-
-  const handleDocumentation = () => {
-    Linking.openURL("https://axyora.ai/docs");
+  const persistSetting = async (key: string, value: boolean, rollback: () => void) => {
+    try {
+      await updateSettings({ [key]: value });
+    } catch (e) {
+      console.warn("Failed to update setting", key, e);
+      rollback();
+    }
   };
 
   return (
     <SafeAreaView style={styles.safeContainer}>
       <LinearGradient
-        colors={[colors.background, colors.surfaceLight]}
+        colors={[colors.backgroundAlt, colors.background, colors.backgroundTertiary]}
         style={styles.container}
       >
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Header */}
           <View style={styles.header}>
-            <Text style={[styles.title, { fontFamily: fontFamily.bold }]}>⚙️ Settings</Text>
-            <TouchableOpacity onPress={props.onClose}>
-              <Text style={[styles.closeButton, { fontFamily: fontFamily.semiBold }]}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* System Stats */}
-          <View style={styles.statsContainer}>
-            <Text style={[styles.statsTitle, { fontFamily: fontFamily.bold }]}>System Status</Text>
-            <View style={styles.statsGrid}>
-              <View style={styles.statBox}>
-                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.indexedFiles}</Text>
-                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Files Indexed</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.totalMemorySize}</Text>
-                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Memory Used</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={[styles.statValue, { fontFamily: fontFamily.black }]}>{stats.processingTime}</Text>
-                <Text style={[styles.statLabel, { fontFamily: fontFamily.regular }]}>Avg Speed</Text>
-              </View>
+            <View>
+              <Text style={[styles.title, { fontFamily: fontFamily.black }]}>Settings</Text>
+              <Text style={[styles.subtitle, { fontFamily: fontFamily.regular }]}>System control & monitoring</Text>
             </View>
+            <TouchableOpacity onPress={props.onClose} style={styles.closeButton}>
+              <CloseIcon size={16} color={colors.text} />
+            </TouchableOpacity>
           </View>
 
-          {/* Indexing Section */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>📊 Data Management</Text>
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.7}
-              onPress={props.onReindex}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>🔄</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Re-index Data
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    Scan for new files
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.7}
-              onPress={props.onViewIndexing}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>📈</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Processing Status
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    View real-time progress
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.menuItem, styles.menuItemDanger]}
-              activeOpacity={0.7}
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>Data Management</Text>
+            <SettingRow title="Re-index All Files" subtitle="Scan for new files" onPress={props.onReindex} />
+            <SettingRow title="View Processing Queue" subtitle="See live indexing status" onPress={props.onViewIndexing} />
+            <SettingRow
+              title="Clear Cache"
+              subtitle="Remove temporary files"
               onPress={handleClearData}
-              disabled={clearing}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>🗑️</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger, { fontFamily: fontFamily.semiBold }]}>
-                    Clear All Data
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    Delete all memories
-                  </Text>
-                </View>
-              </View>
-              {clearing ? (
-                <ActivityIndicator color={colors.danger} size="small" />
-              ) : (
-                <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-              )}
-            </TouchableOpacity>
+              loading={clearing}
+            />
           </View>
 
-          {/* Performance Settings */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>⚡ Performance</Text>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>Performance</Text>
+            <ToggleRow
+              title="Storage Optimization"
+              value={storageOptimization}
+              onChange={(value) => {
+                const prev = storageOptimization;
+                setStorageOptimization(value);
+                void persistSetting("storageOptimization", value, () => setStorageOptimization(prev));
+              }}
+              disabled={settingsLoading}
+            />
+            <ToggleRow
+              title="Background Processing"
+              value={backgroundProcessing}
+              onChange={(value) => {
+                const prev = backgroundProcessing;
+                setBackgroundProcessing(value);
+                void persistSetting("backgroundProcessing", value, () => setBackgroundProcessing(prev));
+              }}
+              disabled={settingsLoading}
+            />
+            <ToggleRow
+              title="Auto-Index New Files"
+              value={autoIndex}
+              onChange={(value) => {
+                const prev = autoIndex;
+                setAutoIndex(value);
+                void persistSetting("autoIndex", value, () => setAutoIndex(prev));
+              }}
+              disabled={settingsLoading}
+            />
+            <ToggleRow
+              title="Low Power Mode"
+              value={lowPowerMode}
+              onChange={(value) => {
+                const prev = lowPowerMode;
+                setLowPowerMode(value);
+                void persistSetting("lowPowerMode", value, () => setLowPowerMode(prev));
+              }}
+              disabled={settingsLoading}
+            />
+          </View>
 
-            <View style={styles.toggleItem}>
-              <View style={styles.toggleLeft}>
-                <Text style={styles.toggleIcon}>🚀</Text>
-                <View>
-                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Storage Optimization
-                  </Text>
-                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
-                    Compress indexed data
-                  </Text>
-                </View>
-              </View>
-              <Switch
-                value={storageOptimization}
-                onValueChange={async (val) => {
-                  setStorageOptimization(val);
-                  try {
-                    await fetch("http://localhost:8000/settings", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ storage_optimization: val }),
-                    });
-                  } catch (e) {
-                    console.log("Failed to update storage optimization");
-                  }
-                }}
-                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
-                thumbColor={storageOptimization ? colors.accent : colors.backgroundAlt}
-              />
-            </View>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>Privacy & Security</Text>
+            <ToggleRow
+              title="Local Encryption"
+              value={encryptionEnabled}
+              onChange={(value) => {
+                const prev = encryptionEnabled;
+                setEncryptionEnabled(value);
+                void persistSetting("encryptionEnabled", value, () => setEncryptionEnabled(prev));
+              }}
+              disabled={settingsLoading}
+            />
+            <ToggleRow
+              title="Biometric Lock"
+              value={biometricLock}
+              onChange={(value) => {
+                const prev = biometricLock;
+                setBiometricLock(value);
+                void persistSetting("biometricLock", value, () => setBiometricLock(prev));
+              }}
+              disabled={settingsLoading}
+            />
+          </View>
 
-            <View style={styles.toggleItem}>
-              <View style={styles.toggleLeft}>
-                <Text style={styles.toggleIcon}>🔄</Text>
-                <View>
-                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Background Processing
-                  </Text>
-                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
-                    Index while app is closed
-                  </Text>
-                </View>
-              </View>
-              <Switch
-                value={backgroundProcessing}
-                onValueChange={async (val) => {
-                  setBackgroundProcessing(val);
-                  try {
-                    await fetch("http://localhost:8000/settings", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ background_processing: val }),
-                    });
-                  } catch (e) {
-                    console.log("Failed to update background processing");
-                  }
-                }}
-                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
-                thumbColor={backgroundProcessing ? colors.accent : colors.backgroundAlt}
-              />
-            </View>
-
-            <View style={styles.toggleItem}>
-              <View style={styles.toggleLeft}>
-                <Text style={styles.toggleIcon}>📂</Text>
-                <View>
-                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Auto-Index New Files
-                  </Text>
-                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
-                    Automatically process additions
-                  </Text>
-                </View>
-              </View>
-              <Switch
-                value={autoIndex}
-                onValueChange={async (val) => {
-                  setAutoIndex(val);
-                  try {
-                    await fetch("http://localhost:8000/settings", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ auto_index: val }),
-                    });
-                  } catch (e) {
-                    console.log("Failed to update auto index");
-                  }
-                }}
-                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
-                thumbColor={autoIndex ? colors.accent : colors.backgroundAlt}
-              />
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>Privacy & Legal</Text>
+            <SettingRow title="Privacy Policy" subtitle="Read policies" onPress={handlePrivacyPolicy} />
+            <SettingRow title="Terms of Service" subtitle="View terms" onPress={handleTermsOfService} />
+            <View style={styles.metaRow}>
+              <Text style={styles.metaLabel}>App Version</Text>
+              <Text style={styles.metaValue}>1.0.0</Text>
             </View>
           </View>
 
-          {/* Privacy & Security */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>🔒 Privacy & Security</Text>
-
-            <View style={styles.toggleItem}>
-              <View style={styles.toggleLeft}>
-                <Text style={styles.toggleIcon}>🔐</Text>
-                <View>
-                  <Text style={[styles.toggleTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Local Encryption
-                  </Text>
-                  <Text style={[styles.toggleDesc, { fontFamily: fontFamily.regular }]}>
-                    Encrypt on-device data
-                  </Text>
-                </View>
-              </View>
-              <Switch
-                value={encryptionEnabled}
-                onValueChange={async (val) => {
-                  setEncryptionEnabled(val);
-                  try {
-                    await fetch("http://localhost:8000/settings", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ encryption: val }),
-                    });
-                  } catch (e) {
-                    console.log("Failed to update encryption");
-                  }
-                }}
-                trackColor={{ false: colors.borderLight, true: colors.accent + '40' }}
-                thumbColor={encryptionEnabled ? colors.accent : colors.backgroundAlt}
-              />
+            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>Account</Text>
+            <View style={styles.accountRow}>
+              <Text style={styles.accountEmail}>{user?.email || "local@axyora.ai"}</Text>
             </View>
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.7}
-              onPress={handlePrivacyPolicy}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>📋</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Privacy Policy
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    View our data practices
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.7}
-              onPress={handleTermsOfService}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>⚖️</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Terms of Service
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    User agreement
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* About & Help */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>ℹ️ About & Help</Text>
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.7}
-              onPress={handleDocumentation}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>📖</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, { fontFamily: fontFamily.semiBold }]}>
-                    Documentation
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    View guides and tips
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
-            </TouchableOpacity>
-
-            <View style={styles.aboutItem}>
-              <Text style={[styles.aboutTitle, { fontFamily: fontFamily.bold }]}>Axyora v1.0.0</Text>
-              <Text style={[styles.aboutDesc, { fontFamily: fontFamily.regular }]}>
-                Privacy-first AI memory engine. All data stays on your device.
-              </Text>
-            </View>
-          </View>
-
-          {/* Account Section */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { fontFamily: fontFamily.bold }]}>👤 Account</Text>
-
-            <TouchableOpacity
-              style={[styles.menuItem, styles.menuItemDanger]}
-              activeOpacity={0.7}
-              onPress={handleLogout}
-              disabled={loggingOut}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuItemIcon}>🚪</Text>
-                <View style={styles.menuItemContent}>
-                  <Text style={[styles.menuItemTitle, styles.menuItemTitleDanger, { fontFamily: fontFamily.semiBold }]}>
-                    Logout
-                  </Text>
-                  <Text style={[styles.menuItemDesc, { fontFamily: fontFamily.regular }]}>
-                    Exit your account
-                  </Text>
-                </View>
-              </View>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} disabled={loggingOut}>
               {loggingOut ? (
-                <ActivityIndicator color={colors.danger} size="small" />
+                <ActivityIndicator color={colors.textInverse} />
               ) : (
-                <Text style={[styles.menuItemArrow, { fontFamily: fontFamily.bold }]}>›</Text>
+                <Text style={styles.logoutText}>Sign Out</Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* Footer */}
-          <View style={styles.footer}>
-            <Text style={[styles.footerText, { fontFamily: fontFamily.regular }]}>
-              © 2026 Axyora. Privacy-first memory engine.
-            </Text>
-          </View>
+          <View style={{ height: 40 }} />
         </ScrollView>
       </LinearGradient>
+
     </SafeAreaView>
+  );
+}
+
+function SettingRow(props: {
+  title: string;
+  subtitle?: string;
+  onPress?: () => void;
+  loading?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={styles.row} onPress={props.onPress} activeOpacity={0.7}>
+      <View style={styles.rowLeft}>
+        <Text style={styles.rowTitle}>{props.title}</Text>
+        {props.subtitle ? <Text style={styles.rowSubtitle}>{props.subtitle}</Text> : null}
+      </View>
+      {props.loading ? (
+        <ActivityIndicator color={colors.accent} />
+      ) : (
+        <Text style={styles.rowArrow}>›</Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function ToggleRow(props: { title: string; value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+  return (
+    <View style={styles.toggleRow}>
+      <Text style={styles.rowTitle}>{props.title}</Text>
+      <Switch
+        value={props.value}
+        onValueChange={props.onChange}
+        disabled={props.disabled}
+        thumbColor={props.value ? colors.accent : "#555"}
+        trackColor={{ false: "#222", true: "rgba(16, 185, 129, 0.4)" }}
+      />
+    </View>
   );
 }
 
@@ -492,189 +307,192 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scroll: {
-    flex: 1,
+    paddingHorizontal: spacing.lg,
   },
   header: {
+    marginTop: spacing.xl,
+    marginBottom: spacing.xl,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    justifyContent: "space-between",
   },
   title: {
-    fontSize: 26,
+    ...typography.h2,
     color: colors.text,
+  },
+  subtitle: {
+    ...typography.body3,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
   },
   closeButton: {
-    fontSize: 24,
-    color: colors.accent,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.cardGlass,
   },
-
-  // Stats Container
-  statsContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginBottom: 16,
-  },
-  statsTitle: {
-    fontSize: 12,
+  closeText: {
     color: colors.text,
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 18,
   },
-  statsGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: colors.card,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
+  statsCard: {
+    backgroundColor: colors.cardGlass,
+    borderRadius: borderRadii.xl,
+    padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: spacing.lg,
+    ...shadows.md,
   },
-  statValue: {
-    fontSize: 18,
-    color: colors.accent,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 10,
-    color: colors.textMuted,
-    textAlign: 'center',
-  },
-
   section: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 13,
-    color: colors.text,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 12,
+    ...typography.label2,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
-
-  // Menu Items
-  menuItem: {
+  statsGrid: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-  menuItemDanger: {
-    backgroundColor: colors.danger + "10",
-    borderColor: colors.danger + "30",
-  },
-  menuItemLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+  statItem: {
     flex: 1,
+    backgroundColor: colors.surfaceGlass,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadii.lg,
+    alignItems: "center",
   },
-  menuItemIcon: {
-    fontSize: 18,
-  },
-  menuItemContent: {
-    flex: 1,
-  },
-  menuItemTitle: {
+  statValue: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 16,
   },
-  menuItemTitleDanger: {
-    color: colors.danger,
-  },
-  menuItemDesc: {
+  statLabel: {
     color: colors.textMuted,
     fontSize: 11,
+    marginTop: 4,
+  },
+  statsActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  inlineButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    backgroundColor: colors.surfaceGlass,
+  },
+  inlineText: {
+    ...typography.body3,
+    color: colors.textSecondary,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  rowLeft: {
+    flex: 1,
+  },
+  rowTitle: {
+    ...typography.body2,
+    color: colors.text,
+  },
+  rowSubtitle: {
+    ...typography.body3,
+    color: colors.textMuted,
     marginTop: 2,
   },
-  menuItemArrow: {
-    color: colors.accent,
+  rowArrow: {
+    color: colors.textSecondary,
     fontSize: 18,
   },
-
-  // Toggle Items
-  toggleItem: {
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  metaRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingVertical: spacing.md,
   },
-  toggleLeft: {
-    flexDirection: "row",
+  metaLabel: {
+    ...typography.body3,
+    color: colors.textMuted,
+  },
+  metaValue: {
+    ...typography.body3,
+    color: colors.text,
+  },
+  accountRow: {
+    paddingVertical: spacing.sm,
+  },
+  accountEmail: {
+    ...typography.body2,
+    color: colors.text,
+  },
+  logoutButton: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadii.lg,
+    backgroundColor: colors.accent,
     alignItems: "center",
-    gap: 12,
+    ...shadows.md,
+  },
+  logoutText: {
+    ...typography.buttonLarge,
+    color: colors.textInverse,
+  },
+  modalOverlay: {
     flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
   },
-  toggleIcon: {
-    fontSize: 18,
-  },
-  toggleTitle: {
-    color: colors.text,
-    fontSize: 13,
-  },
-  toggleDesc: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 2,
-  },
-
-  // About Item
-  aboutItem: {
-    backgroundColor: colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    borderRadius: 12,
+  modalCard: {
+    width: "100%",
+    backgroundColor: colors.cardGlass,
+    borderRadius: borderRadii.xl,
+    padding: spacing.xl,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: 8,
   },
-  aboutTitle: {
+  modalTitle: {
+    ...typography.h3,
     color: colors.text,
-    fontSize: 13,
-    marginBottom: 4,
+    marginBottom: spacing.md,
   },
-  aboutDesc: {
-    color: colors.textMuted,
-    fontSize: 11,
-    lineHeight: 16,
+  modalText: {
+    ...typography.body3,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
-
-  // Footer
-  footer: {
-    paddingHorizontal: 16,
-    paddingVertical: 24,
+  modalButton: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadii.lg,
+    backgroundColor: colors.accent,
     alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    marginTop: 16,
   },
-  footerText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    textAlign: "center",
-    lineHeight: 16,
+  modalButtonText: {
+    ...typography.button,
+    color: colors.textInverse,
   },
 });

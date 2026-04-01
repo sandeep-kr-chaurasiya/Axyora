@@ -114,12 +114,12 @@ export function RealTimeImageProcessor({ images, currentProcessing, totalProgres
               />
               {currentProcessing.status === 'complete' && (
                 <View style={styles.completeOverlay}>
-                  <Text style={styles.completeCheckmark}>✓</Text>
+                  <Text style={styles.completeCheckmark}>OK</Text>
                 </View>
               )}
               {currentProcessing.status === 'error' && (
                 <View style={styles.errorOverlay}>
-                  <Text style={styles.errorIcon}>⚠</Text>
+                  <Text style={styles.errorIcon}>!</Text>
                 </View>
               )}
               {(currentProcessing.status === 'extracting' || currentProcessing.status === 'indexing') && (
@@ -183,10 +183,10 @@ export function RealTimeImageProcessor({ images, currentProcessing, totalProgres
                         style={[
                           styles.stepNum,
                           { fontFamily: fontFamily.semiBold },
-                          item.status !== 'pending' && { color: colors.text },
-                        ]}
-                      >
-                        {item.status === 'complete' ? '✓' : idx + 1}
+                        item.status !== 'pending' && { color: colors.text },
+                      ]}
+                    >
+                        {item.status === 'complete' ? 'OK' : idx + 1}
                       </Text>
                     </View>
                     <Text
@@ -277,12 +277,12 @@ export function RealTimeImageProcessor({ images, currentProcessing, totalProgres
 
                   {img.status === 'complete' && (
                     <View style={styles.thumbnailBadge}>
-                      <Text style={styles.badgeIcon}>✓</Text>
+                      <Text style={styles.badgeIcon}>OK</Text>
                     </View>
                   )}
                   {img.status === 'error' && (
                     <View style={[styles.thumbnailBadge, styles.thumbnailBadgeError]}>
-                      <Text style={styles.badgeIcon}>⚠</Text>
+                      <Text style={styles.badgeIcon}>!</Text>
                     </View>
                   )}
                   {(img.status === 'extracting' || img.status === 'indexing') && (

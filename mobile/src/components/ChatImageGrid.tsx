@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   StyleSheet,
   Text,
   View,
   Image,
   TouchableOpacity,
-  Dimensions,
+  useWindowDimensions,
   FlatList,
   Modal,
   ScrollView,
+  Share,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme/colors";
 
 export interface ImageResult {
@@ -23,12 +25,7 @@ export interface ImageResult {
   type: "image";
 }
 
-const { width, height } = Dimensions.get("window");
-
-// Grid layout constants - scoped outside component for efficiency
-const GRID_COLS = 3;
 const GAP = 6;
-const ITEM_SIZE = (width - 48 - GAP * 2) / GRID_COLS;
 
 interface ChatImageGridProps {
   images: ImageResult[];
@@ -37,8 +34,13 @@ interface ChatImageGridProps {
 
 export function ChatImageGrid(props: ChatImageGridProps) {
   const { images, maxImages = 6 } = props;
-  const [expandedImage, setExpandedImage] = useState<ImageResult | null>(null);
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const closeStampRef = useRef(0);
   const [failedImageNames, setFailedImageNames] = useState<Set<string>>(new Set());
+  const isPortrait = height >= width;
+  const gridCols = isPortrait ? 2 : 3;
   
   // Show only top 6 most relevant images, filtered to exclude HEIC and failed images
   const validImages = images
@@ -55,28 +57,33 @@ export function ChatImageGrid(props: ChatImageGridProps) {
     })
     .slice(0, maxImages);
 
-  const renderImageItem = ({ item }: { item: ImageResult }) => {
-    // Ensure proper file URI construction
-    let imageUri: string | null = null;
+  const resolveImageUri = (item: ImageResult): string | null => {
     let path = item.image_uri as string;
-    
-    // If already a complete file:// URI, use as-is
+    if (!path) return null;
     if (path.startsWith("file://")) {
-      imageUri = path;
-    } else {
-      // Otherwise, construct file:// URI
-      if (!path.startsWith("/")) {
-        path = "/" + path;
-      }
-      imageUri = `file://${path}`;
+      return path;
     }
+    if (!path.startsWith("/")) {
+      path = "/" + path;
+    }
+    return `file://${path}`;
+  };
+
+  const closeViewer = () => {
+    closeStampRef.current = Date.now();
+    setExpandedIndex(null);
+  };
+
+  const renderImageItem = ({ item, index }: { item: ImageResult; index: number }) => {
+    // Ensure proper file URI construction
+    const imageUri = resolveImageUri(item);
 
     return (
       <TouchableOpacity 
         activeOpacity={0.8} 
         style={styles.gridItem}
         onPress={() => {
-          setExpandedImage(item);
+          setExpandedIndex(index);
         }}
       >
         {/* Small Image Thumbnail */}
@@ -113,6 +120,8 @@ export function ChatImageGrid(props: ChatImageGridProps) {
     return null;
   }
 
+  const expandedImage = expandedIndex !== null ? validImages[expandedIndex] : null;
+
   return (
     <>
       {/* Chat Thumbnail Grid */}
@@ -121,7 +130,7 @@ export function ChatImageGrid(props: ChatImageGridProps) {
           data={validImages}
           renderItem={renderImageItem}
           keyExtractor={(item, idx) => `${item.file_name}-${idx}`}
-          numColumns={GRID_COLS}
+          numColumns={gridCols}
           columnWrapperStyle={styles.row}
           scrollEnabled={false}
           style={styles.gridContainer}
@@ -129,56 +138,99 @@ export function ChatImageGrid(props: ChatImageGridProps) {
         />
       </View>
 
-      {/* Expanded Image Modal - Simplified View */}
+      {/* Expanded Image Modal - Swipe + Zoom */}
       <Modal
-        visible={expandedImage !== null}
+        visible={expandedIndex !== null}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setExpandedImage(null)}
+        onRequestClose={closeViewer}
       >
         <View style={styles.modalContainer}>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setExpandedImage(null)}
-          >
-            <View style={styles.modalContent}>
-              {/* File Location */}
-              <View style={styles.locationBar}>
-                <Text style={styles.locationIcon}>📁</Text>
-                <Text style={styles.locationText} numberOfLines={1}>
-                  {expandedImage?.file_path || expandedImage?.file_name}
-                </Text>
-              </View>
-
-              {/* Image Display */}
-              {expandedImage?.image_uri && (
-                <Image
-                  source={{ uri: (() => {
-                    let path = expandedImage.image_uri;
-                    if (path.startsWith("file://")) {
-                      return path;
-                    }
-                    if (!path.startsWith("/")) {
-                      path = "/" + path;
-                    }
-                    return `file://${path}`;
-                  })() }}
-                  style={styles.expandedImage}
-                  resizeMode="contain"
-                  onError={() => console.warn(`[Image] Failed to load expanded: ${expandedImage.file_name}`)}
-                />
-              )}
+          <View style={[styles.modalTopBar, { paddingTop: Math.max(insets.top, 16) }]}>
+            <Text style={styles.modalTitle} numberOfLines={1}>
+              {expandedImage?.file_name || "Preview"}
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={async () => {
+                  if (!expandedImage) return;
+                  const uri = resolveImageUri(expandedImage);
+                  if (!uri) return;
+                  try {
+                    await Share.share({
+                      url: uri,
+                      message: expandedImage.file_name || uri,
+                    });
+                  } catch (err) {
+                    console.warn("[ChatImageGrid] Share failed", err);
+                  }
+                }}
+              >
+                <Text style={styles.actionText}>Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonClose]}
+                onPress={closeViewer}
+              >
+                <Text style={[styles.actionText, styles.actionTextClose]}>Close</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          </View>
 
-          {/* Close Button */}
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => setExpandedImage(null)}
-          >
-            <Text style={styles.closeText}>✕</Text>
-          </TouchableOpacity>
+          <FlatList
+            data={validImages}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item, idx) => `${item.file_name}-full-${idx}`}
+            initialScrollIndex={expandedIndex ?? 0}
+            getItemLayout={(_, index) => ({
+              length: width,
+              offset: width * index,
+              index,
+            })}
+            onMomentumScrollEnd={(e) => {
+              if (expandedIndex === null) return;
+              if (Date.now() - closeStampRef.current < 300) return;
+              const nextIndex = Math.round(e.nativeEvent.contentOffset.x / width);
+              setExpandedIndex(nextIndex);
+            }}
+            renderItem={({ item }) => {
+              const uri = resolveImageUri(item);
+              return (
+                <View style={[styles.viewerPage, { width, height }]}>
+                  <ScrollView
+                    maximumZoomScale={3}
+                    minimumZoomScale={1}
+                    showsVerticalScrollIndicator={false}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.zoomContainer}
+                    pinchGestureEnabled
+                  >
+                    {uri && (
+                      <Image
+                        source={{ uri }}
+                        style={[styles.expandedImage, { width, height: height * 0.78 }]}
+                        resizeMode="contain"
+                        onError={() =>
+                          console.warn(`[Image] Failed to load expanded: ${item.file_name}`)
+                        }
+                      />
+                    )}
+                  </ScrollView>
+                  <View style={styles.viewerMeta}>
+                    <Text style={styles.viewerMetaText} numberOfLines={1}>
+                      {item.file_path || item.file_name}
+                    </Text>
+                    <Text style={styles.viewerMetaSub}>
+                      {expandedIndex !== null ? expandedIndex + 1 : 1} / {validImages.length}
+                    </Text>
+                  </View>
+                </View>
+              );
+            }}
+          />
         </View>
       </Modal>
     </>
@@ -188,11 +240,6 @@ export function ChatImageGrid(props: ChatImageGridProps) {
 const styles = StyleSheet.create({
   container: {
     width: "100%",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "rgba(255,255,255,0.02)",
-    borderRadius: 12,
-    marginBottom: 12,
   },
   gridContainer: {
     width: "100%",
@@ -202,21 +249,21 @@ const styles = StyleSheet.create({
   },
   row: {
     gap: GAP,
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
   },
   gridItem: {
-    width: ITEM_SIZE,
-    height: ITEM_SIZE,
-    backgroundColor: "#111827",
+    flex: 1,
+    aspectRatio: 1,
+    backgroundColor: colors.surface,
     borderRadius: 8,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: colors.border,
   },
   image: {
     width: "100%",
     height: "100%",
-    backgroundColor: "#1F2937",
+    backgroundColor: colors.surfaceLight,
   },
   imagePlaceholder: {
     justifyContent: "center",
@@ -235,93 +282,84 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   scoreText: {
-    color: "#06070B",
+    color: colors.textInverse,
     fontSize: 9,
     fontWeight: "700",
   },
   // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.95)",
-    justifyContent: "center",
+    backgroundColor: "rgba(5,5,7,0.98)",
+    justifyContent: "flex-start",
     alignItems: "center",
   },
-  modalBackdrop: {
-    flex: 1,
+  modalTopBar: {
     width: "100%",
+    paddingTop: 18,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  actionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  actionButtonClose: {
+    backgroundColor: "rgba(248,113,113,0.14)",
+    borderColor: "rgba(248,113,113,0.35)",
+  },
+  actionText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  actionTextClose: {
+    color: "#fca5a5",
+  },
+  viewerPage: {
     justifyContent: "center",
     alignItems: "center",
   },
-  modalContent: {
-    width: "85%",
-    maxHeight: "80%",
-    backgroundColor: "#111A2A",
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  locationBar: {
-    flexDirection: "row",
+  zoomContainer: {
+    flexGrow: 1,
+    justifyContent: "center",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.1)",
-  },
-  locationIcon: {
-    fontSize: 16,
-  },
-  locationText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    flex: 1,
   },
   expandedImage: {
+    backgroundColor: colors.surfaceLight,
+  },
+  viewerMeta: {
     width: "100%",
-    height: 400,
-    backgroundColor: "#1F2937",
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 18,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
   },
-  expandedInfo: {
-    padding: 16,
-  },
-  expandedTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  expandedScore: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 12,
-  },
-  captionScroll: {
-    maxHeight: 100,
-    marginTop: 8,
-  },
-  expandedCaption: {
+  viewerMetaText: {
     color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 12,
   },
-  closeButton: {
-    position: "absolute",
-    top: 20,
-    right: 20,
-    width: 44,
-    height: 44,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  closeText: {
+  viewerMetaSub: {
+    marginTop: 4,
     color: colors.text,
-    fontSize: 24,
-    fontWeight: "400",
+    fontSize: 11,
+    fontWeight: "600",
   },
 });

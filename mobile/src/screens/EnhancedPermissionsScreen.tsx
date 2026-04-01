@@ -1,17 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
-import { ActivityIndicator, Alert, Linking, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 import { requestAndroidStorageDirectoryAccess, requestScanPermissions } from "../services/scannerService";
 import { colors } from "../theme/colors";
+import { spacing, borderRadii, shadows } from "../theme/spacing";
+import { typography } from "../theme/fonts";
 
-export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
+export function EnhancedPermissionsScreen(props: { onGranted: () => void; onSkip?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [grantedPerms, setGrantedPerms] = useState({
     mediaGranted: false,
     runtimeLimited: false,
     storageGranted: false,
   });
+
+  const fullyGranted = useMemo(
+    () => grantedPerms.mediaGranted || grantedPerms.storageGranted || grantedPerms.runtimeLimited,
+    [grantedPerms]
+  );
+
+  useEffect(() => {
+    if (!fullyGranted) return;
+    const timer = setTimeout(() => props.onGranted(), 600);
+    return () => clearTimeout(timer);
+  }, [fullyGranted, props]);
 
   const request = async () => {
     setLoading(true);
@@ -40,95 +61,62 @@ export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
         ]
       );
     }
-    
-    if (perms.mediaGranted || storageGranted || perms.runtimeLimited) {
-      // Small delay to let user see the checkmark
-      setTimeout(() => {
-        props.onGranted();
-      }, 800);
-    }
+
     setLoading(false);
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Permissions</Text>
-      <Text style={styles.copy}>
-        Axyora needs permission to scan and index your private files locally on your device.
-      </Text>
-
-      {/* Permission Breakdown */}
-      <View style={styles.permissionsBox}>
-        <View style={styles.permissionRow}>
-          <View style={styles.permissionLeft}>
-            <Text style={styles.permissionEmoji}>🖼️</Text>
-            <View>
-              <Text style={styles.permissionTitle}>Photo Library</Text>
-              <Text style={styles.permissionDetail}>Read all images</Text>
-            </View>
-          </View>
-          {grantedPerms.mediaGranted && <Text style={styles.checkmark}>✓</Text>}
+      <View style={styles.header}>
+        <View style={styles.iconWrap}>
+          <Text style={styles.iconLabel}>FILES</Text>
         </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.permissionRow}>
-          <View style={styles.permissionLeft}>
-            <Text style={styles.permissionEmoji}>🎵</Text>
-            <View>
-              <Text style={styles.permissionTitle}>Audio Files</Text>
-              <Text style={styles.permissionDetail}>Read audio & voice memos</Text>
-            </View>
-          </View>
-          {grantedPerms.mediaGranted && <Text style={styles.checkmark}>✓</Text>}
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.permissionRow}>
-          <View style={styles.permissionLeft}>
-            <Text style={styles.permissionEmoji}>📄</Text>
-            <View>
-              <Text style={styles.permissionTitle}>Documents</Text>
-              <Text style={styles.permissionDetail}>Read PDFs, Word docs, text files</Text>
-            </View>
-          </View>
-          {(grantedPerms.mediaGranted || grantedPerms.storageGranted) && <Text style={styles.checkmark}>✓</Text>}
-        </View>
-      </View>
-
-      {/* Privacy Note */}
-      <View style={styles.privacyBox}>
-        <Text style={styles.privacyIcon}>🔒</Text>
-        <Text style={styles.privacyText}>
-          All files stay on your device. We only scan files <Text style={styles.bold}>you have access to</Text>.
+        <Text style={styles.title}>Enable File Access</Text>
+        <Text style={styles.copy}>
+          Axyora needs access to your photos and documents to organize and search your memories.
         </Text>
       </View>
 
-      {/* Button */}
-      <TouchableOpacity 
-        style={[styles.button, loading && styles.buttonDisabled]} 
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Why we need this</Text>
+        <View style={styles.checkRow}>
+          <View style={styles.checkDot} />
+          <Text style={styles.checkText}>Index your memories privately</Text>
+        </View>
+        <View style={styles.checkRow}>
+          <View style={styles.checkDot} />
+          <Text style={styles.checkText}>Search your files instantly</Text>
+        </View>
+        <View style={styles.checkRow}>
+          <View style={styles.checkDot} />
+          <Text style={styles.checkText}>Never upload data without consent</Text>
+        </View>
+      </View>
+
+      <View style={styles.privacyBox}>
+        <View style={styles.privacyDot} />
+        <Text style={styles.privacyText}>
+          All files stay on your device. You’re always in control.
+        </Text>
+      </View>
+
+      <TouchableOpacity
+        style={[styles.button, fullyGranted && styles.buttonGranted, loading && styles.buttonDisabled]}
         onPress={request}
         disabled={loading}
       >
         {loading ? (
-          <ActivityIndicator color="#072117" size="small" />
+          <ActivityIndicator color={colors.textInverse} size="small" />
         ) : (
           <Text style={styles.buttonText}>
-            {grantedPerms.mediaGranted
-              ? "✓ Permissions Granted"
-              : grantedPerms.storageGranted
-              ? "✓ Storage Access Granted"
-              : grantedPerms.runtimeLimited
-              ? "Continue (Expo Go Limited)"
-              : "Grant Permissions"}
+            {fullyGranted ? "Permissions Granted" : "Grant Access"}
           </Text>
         )}
       </TouchableOpacity>
 
-      <Text style={styles.footer}>
-        You can change these permissions anytime in Settings → Privacy
-      </Text>
+      <TouchableOpacity style={styles.secondaryButton} onPress={props.onSkip}>
+        <Text style={styles.secondaryText}>Maybe Later</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -136,111 +124,114 @@ export function EnhancedPermissionsScreen(props: { onGranted: () => void }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 60,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xxl,
     backgroundColor: colors.background,
   },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "800",
-    marginBottom: 10,
-  },
-  copy: {
-    color: colors.textMuted,
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 28,
-  },
-  permissionsBox: {
-    backgroundColor: "rgba(69, 224, 161, 0.05)",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(69, 224, 161, 0.2)",
-    overflow: "hidden",
-    marginBottom: 20,
-  },
-  permissionRow: {
-    flexDirection: "row",
+  header: {
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    marginBottom: spacing.xl,
   },
-  permissionLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  permissionEmoji: {
-    fontSize: 28,
-    marginRight: 12,
-  },
-  permissionTitle: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 15,
-    marginBottom: 3,
-  },
-  permissionDetail: {
-    color: colors.textMuted,
-    fontSize: 13,
-  },
-  checkmark: {
-    color: colors.accent,
-    fontWeight: "800",
-    fontSize: 24,
-    marginLeft: 12,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "rgba(69, 224, 161, 0.1)",
-    marginHorizontal: 14,
-  },
-  privacyBox: {
-    backgroundColor: "rgba(69, 224, 161, 0.08)",
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 28,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  privacyIcon: {
-    fontSize: 20,
-    marginRight: 10,
-  },
-  privacyText: {
-    color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
-    flex: 1,
-  },
-  bold: {
-    color: colors.text,
-    fontWeight: "700",
-  },
-  button: {
-    backgroundColor: colors.accent,
-    borderRadius: 12,
+  iconWrap: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
     alignItems: "center",
     justifyContent: "center",
-    height: 50,
-    marginBottom: 16,
+    backgroundColor: "rgba(16, 185, 129, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.3)",
+  },
+  iconLabel: {
+    fontSize: 14,
+    letterSpacing: 1.2,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  title: {
+    ...typography.h2,
+    color: colors.text,
+    marginTop: spacing.lg,
+    textAlign: "center",
+  },
+  copy: {
+    ...typography.body2,
+    color: colors.textMuted,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    lineHeight: 22,
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: borderRadii.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  cardTitle: {
+    ...typography.label1,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  checkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  checkText: {
+    ...typography.body2,
+    color: colors.text,
+  },
+  privacyBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  privacyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  privacyText: {
+    ...typography.body3,
+    color: colors.textMuted,
+    flex: 1,
+  },
+  button: {
+    height: 52,
+    borderRadius: borderRadii.lg,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.md,
+  },
+  buttonGranted: {
+    backgroundColor: colors.success,
+  },
+  buttonText: {
+    ...typography.buttonLarge,
+    color: colors.textInverse,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
-  buttonText: {
-    color: "#072117",
-    fontWeight: "800",
-    fontSize: 16,
+  secondaryButton: {
+    marginTop: spacing.md,
+    alignItems: "center",
   },
-  footer: {
-    color: colors.textMuted,
-    fontSize: 12,
-    textAlign: "center",
-    lineHeight: 16,
+  secondaryText: {
+    ...typography.body3,
+    color: colors.textSecondary,
   },
 });

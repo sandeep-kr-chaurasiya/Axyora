@@ -7,13 +7,14 @@ Includes caching and memory optimization.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 import gc
+from collections import OrderedDict
 
 import numpy as np
 
 
-from production_config import EMBEDDING_MODEL
+from production_config import EMBEDDING_MODEL, EMBED_BATCH_SIZE, EMBED_QUERY_CACHE_MAX, EMBED_TEXT_CACHE_MAX
 
 _embedding_instance = None
 
@@ -37,8 +38,8 @@ class EmbeddingEngine:
         
         self.model_name = model_name or EMBEDDING_MODEL
         self._model_instance = None
-        self._query_cache: dict[str, List[float]] = {}
-        self._text_cache: dict[str, List[float]] = {}
+        self._query_cache = _LRUCache(max_size=EMBED_QUERY_CACHE_MAX)
+        self._text_cache = _LRUCache(max_size=EMBED_TEXT_CACHE_MAX)
         
     @property
     def _model(self):
@@ -53,8 +54,9 @@ class EmbeddingEngine:
 
     def embed_single(self, text: str) -> List[float]:
         """Embed one string with caching, return normalized float list."""
-        if text in self._text_cache:
-            return self._text_cache[text]
+        cached = self._text_cache.get(text)
+        if cached is not None:
+            return cached
         
         vec = self._model.encode(
             [text],
@@ -66,11 +68,11 @@ class EmbeddingEngine:
         
         # Cache only small strings to avoid memory bloat
         if len(text) < 1000:
-            self._text_cache[text] = result
+            self._text_cache.set(text, result)
         
         return result
 
-    def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
+    def embed_batch(self, texts: List[str], batch_size: Optional[int] = None) -> List[List[float]]:
         """
         Embed a batch of texts with memory optimization.
         Returns list of normalized float lists, one per input.
@@ -78,9 +80,10 @@ class EmbeddingEngine:
         if not texts:
             return []
 
+        effective_batch_size = batch_size or EMBED_BATCH_SIZE
         vectors = self._model.encode(
             texts,
-            batch_size=batch_size,
+            batch_size=effective_batch_size,
             normalize_embeddings=True,
             show_progress_bar=len(texts) > 20,
             convert_to_numpy=True,
@@ -99,15 +102,15 @@ class EmbeddingEngine:
         Cached to avoid redundant embeddings for repeated queries.
         See: https://huggingface.co/BAAI/bge-small-en-v1.5
         """
-        if query in self._query_cache:
-            return self._query_cache[query]
+        cached = self._query_cache.get(query)
+        if cached is not None:
+            return cached
         
         prefixed = f"Represent this sentence for searching relevant passages: {query}"
         result = self.embed_single(prefixed)
         
         # Cache queries since they're often repeated
-        if len(self._query_cache) < 1000:
-            self._query_cache[query] = result
+        self._query_cache.set(query, result)
         
         return result
 
@@ -117,3 +120,26 @@ class EmbeddingEngine:
         self._text_cache.clear()
         gc.collect()
         print("[Embeddings] Cache cleared")
+
+
+class _LRUCache:
+    def __init__(self, max_size: int):
+        self.max_size = max_size
+        self._data: OrderedDict[str, List[float]] = OrderedDict()
+
+    def get(self, key: str) -> Optional[List[float]]:
+        if key not in self._data:
+            return None
+        value = self._data.pop(key)
+        self._data[key] = value
+        return value
+
+    def set(self, key: str, value: List[float]) -> None:
+        if key in self._data:
+            self._data.pop(key)
+        self._data[key] = value
+        if len(self._data) > self.max_size:
+            self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        self._data.clear()

@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors } from "../theme/colors";
+import { CloseIcon } from "./Icons";
 
 export interface Chat {
   id: string;
@@ -177,7 +178,7 @@ export function ChatHistorySideDrawer(props: {
               </Text>
             </View>
             <TouchableOpacity onPress={props.onClose} style={styles.closeBtn}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <CloseIcon size={14} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 

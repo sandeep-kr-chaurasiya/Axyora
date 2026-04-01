@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, StyleSheet, View, Image } from "react-native";
 
 import { colors } from "../theme/colors";
 
@@ -24,7 +24,11 @@ export function AnimatedLogo() {
     <View style={styles.wrap}>
       <Animated.View style={[styles.ring, { opacity: glow, transform: [{ scale }] }]} />
       <View style={styles.core}>
-        <Text style={styles.mark}>A</Text>
+        <Image
+          source={require("../../Axyora transparent .png")}
+          style={styles.logo}
+          resizeMode="contain"
+        />
       </View>
     </View>
   );
@@ -58,9 +62,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  mark: {
-    color: colors.accent,
-    fontSize: 38,
-    fontWeight: "800",
+  logo: {
+    width: 46,
+    height: 46,
   },
 });

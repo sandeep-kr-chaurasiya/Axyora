@@ -3,20 +3,30 @@
  * Complete typography with unified font family
  */
 
+// Using system fonts as fallback since Poppins font files are not included
+// For production, add Poppins TTF files to assets/fonts/ and update these references
+import { Platform } from 'react-native';
+
+const systemFont = Platform.select({
+  ios: 'System',
+  android: 'sans-serif',
+  default: 'System',
+});
+
 export const fontFamily = {
-  thin: 'Poppins_100Thin',
-  extraLight: 'Poppins_200ExtraLight',
-  light: 'Poppins_300Light',
-  regular: 'Poppins_400Regular',
-  medium: 'Poppins_500Medium',
-  semiBold: 'Poppins_600SemiBold', 
-  bold: 'Poppins_700Bold',
-  extraBold: 'Poppins_800ExtraBold',
-  black: 'Poppins_900Black',
+  thin: systemFont,
+  extraLight: systemFont,
+  light: systemFont,
+  regular: systemFont,
+  medium: systemFont,
+  semiBold: systemFont, 
+  bold: systemFont,
+  extraBold: systemFont,
+  black: systemFont,
 };
 
 // Default fallback for web/unsupported platforms
-export const fontFamilyFallback = 'Poppins';
+export const fontFamilyFallback = systemFont;
 
 /**
  * Typography presets using Poppins
@@ -158,21 +168,5 @@ export const typography = {
 /**
  * Font loading configuration for Expo
  */
-// Font loading - fonts will fall back to system fonts if Poppins not available
+// Using system fonts - font files are not included in the bundle
 export const fontsToLoad: Record<string, number> = {};
-
-// Try to load Poppins fonts if they exist
-const fontAssets = [
-  { name: 'Poppins_100Thin', path: '../../../assets/fonts/Poppins-Thin.ttf' },
-  { name: 'Poppins_200ExtraLight', path: '../../../assets/fonts/Poppins-ExtraLight.ttf' },
-  { name: 'Poppins_300Light', path: '../../../assets/fonts/Poppins-Light.ttf' },
-  { name: 'Poppins_400Regular', path: '../../../assets/fonts/Poppins-Regular.ttf' },
-  { name: 'Poppins_500Medium', path: '../../../assets/fonts/Poppins-Medium.ttf' },
-  { name: 'Poppins_600SemiBold', path: '../../../assets/fonts/Poppins-SemiBold.ttf' },
-  { name: 'Poppins_700Bold', path: '../../../assets/fonts/Poppins-Bold.ttf' },
-  { name: 'Poppins_800ExtraBold', path: '../../../assets/fonts/Poppins-ExtraBold.ttf' },
-  { name: 'Poppins_900Black', path: '../../../assets/fonts/Poppins-Black.ttf' },
-];
-
-// Note: Font files should be placed in assets/fonts/ for production
-// For now, app will use system fonts as fallback

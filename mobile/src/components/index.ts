@@ -3,9 +3,6 @@
  * Central export for all reusable premium UI components
  */
 
-export { default as PremiumButton } from "./PremiumButton";
-export { PremiumInput } from "./PremiumInput";
-export { PremiumCard } from "./PremiumCard";
 export { Skeleton, SkeletonCard, TypingIndicator, Loader } from "./LoadingIndicators";
 export {
   SearchIcon,
@@ -25,7 +22,6 @@ export { AnimatedLogo } from "./AnimatedLogo";
 export { MessageBubble } from "./MessageBubble";
 export { ChatImageGrid } from "./ChatImageGrid";
 export { ChatHistorySideDrawer } from "./ChatHistorySideDrawer";
-export { SearchResultCard } from "./SearchResultCard";
-export { ProcessTimeline } from "./ProcessTimeline";
 export { RealTimeImageProcessor } from "./RealTimeImageProcessor";
-export { FailedFilesManager } from "./FailedFilesManager";\n
+export { FailedFilesManager } from "./FailedFilesManager";
+export { SuggestedQueries } from "./SuggestedQueries";

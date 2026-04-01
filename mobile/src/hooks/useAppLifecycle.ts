@@ -1,6 +1,6 @@
 /**
  * App Lifecycle & Permission Management
- * - Request all permissions on app start
+ * - Manage resume/pause queue behavior
  * - Manage resume/pause queue behavior
  * - Persistent permission state
  */
@@ -108,9 +108,9 @@ export function useAppLifecycle(): {
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
 
   useEffect(() => {
-    // Initial setup: request permissions & load stored state
+    // Load stored permission state only (do not prompt on install).
     (async () => {
-      const perms = await requestOnInstallPermissions();
+      const perms = await getPermissionState();
       setPermissions(perms);
     })();
   }, []);

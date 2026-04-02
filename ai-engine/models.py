@@ -17,6 +17,7 @@ class QueryRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
     top_k: int = Field(default=5, ge=1, le=20)
     model: str = Field(default="llama-3.3-70b-versatile")
+    file_type: str = Field(default="all")  # all, image, document
     
     @field_validator("query")
     @classmethod
@@ -24,6 +25,14 @@ class QueryRequest(BaseModel):
         if not v.strip():
             raise ValueError("Query cannot be empty")
         return v.strip()
+
+    @field_validator("file_type")
+    @classmethod
+    def validate_file_type(cls, v):
+        allowed = {"all", "image", "document"}
+        if v not in allowed:
+            return "all"
+        return v
 
 
 class AskRequest(BaseModel):
@@ -36,6 +45,35 @@ class ScanRequest(BaseModel):
     """File scanning request"""
     user_id: str = Field(..., min_length=1, max_length=100)
     files: List[Dict] = Field(default_factory=list)
+
+
+class CheckIndexedFilesRequest(BaseModel):
+    """Check which files are already indexed"""
+    user_id: str = Field(..., min_length=1, max_length=100)
+    file_hashes: List[str] = Field(..., min_length=1)  # List of file fingerprints/hashes
+
+
+class DeltaScanFile(BaseModel):
+    """File descriptor used for delta scan decisions."""
+    file_path: str = Field(..., min_length=1, max_length=4000)
+    file_name: str = Field(default="", max_length=500)
+    file_hash: str = Field(..., min_length=1, max_length=256)
+    file_type: str = Field(default="document")  # image or document
+    last_modified: float = Field(..., ge=0)
+
+    @field_validator("file_type")
+    @classmethod
+    def normalize_file_type(cls, v):
+        normalized = (v or "").strip().lower()
+        if normalized == "image":
+            return "image"
+        return "document"
+
+
+class DeltaScanRequest(BaseModel):
+    """Request model for incremental scan checks."""
+    user_id: str = Field(..., min_length=1, max_length=100)
+    files: List[DeltaScanFile] = Field(default_factory=list)
 
 
 class FileUploadRequest(BaseModel):
@@ -74,13 +112,16 @@ class ImageInfo(BaseModel):
     image_uri: str
     score: float
     tags: List[str] = []
+    objects: List[str] = []
+    colors: List[str] = []
+    confidence: float = 0.0
 
 
 class QueryResponse(BaseModel):
     """Search query response"""
     answer: str
-    sources: List[Dict[str, Any]]
-    images: List[Dict[str, Any]]
+    sources: List[SourceInfo]
+    images: List[ImageInfo]
 
 
 class JobStatus(BaseModel):
@@ -122,3 +163,4 @@ class ProcessingResponse(BaseModel):
     total_processed: int
     total_in_queue: int
     total_failed: int
+    last_processed_file: str = None

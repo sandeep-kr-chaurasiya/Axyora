@@ -1,8 +1,6 @@
 import { auth } from "./firebase";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
-import * as FileSystem from "expo-file-system";
-import { readAsStringAsync } from "expo-file-system/legacy";
 
 // API timeout constants (ms)
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -11,12 +9,12 @@ const QUERY_TIMEOUT = 60000; // 1 minute for queries
 
 export interface ProcessingJob {
   jobId: string;
-  status: "queued" | "processing" | "done" | "error";
+  status: "queued" | "processing" | "done" | "error" | "skipped";
 }
 
 export interface JobStatus {
   jobId: string;
-  status: "queued" | "processing" | "done" | "error";
+  status: "queued" | "processing" | "done" | "error" | "skipped";
   progress: number;
   currentStep: string;
   fileName: string;
@@ -81,15 +79,52 @@ export interface CurrentProcessingInfo {
   total_failed: number;
 }
 
+export interface IndexStatsResponse {
+  total_files: number;
+  indexed: number;
+  pending: number;
+  processing: number;
+  failed: number;
+  progress: number;
+}
+
+export interface DeltaScanRequestFile {
+  file_path: string;
+  file_name: string;
+  file_hash: string;
+  file_type: "image" | "document";
+  last_modified: number;
+}
+
+export interface DeltaScanResponse {
+  total_files: number;
+  indexed: number;
+  pending: number;
+  processing: number;
+  failed: number;
+  new_count: number;
+  updated_count: number;
+  skipped_count: number;
+  queue: Array<{
+    file_path: string;
+    file_name: string;
+    file_hash: string;
+    file_type: "image" | "document";
+    last_modified: number;
+    change_type: "new" | "updated";
+  }>;
+}
+
 interface AiJobStatusResponse {
   job_id: string;
-  status: "queued" | "processing" | "done" | "error";
-  progress: number;
-  current_step: string;
+  status: "queued" | "processing" | "done" | "error" | "skipped";
+  progress?: number;
+  current_step?: string;
   file_name: string;
   file_type: string;
-  chunks_processed: number;
+  chunks_processed?: number;
   error?: string | null;
+  message?: string;
 }
 
 // Network error classification
@@ -101,6 +136,16 @@ class NetworkError extends Error {
   ) {
     super(message);
     this.name = "NetworkError";
+  }
+}
+
+class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "HttpError";
   }
 }
 
@@ -312,7 +357,7 @@ async function makeRequest<T>(
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+        throw new HttpError(res.status, `HTTP ${res.status}: ${errorText || res.statusText}`);
       }
 
       return res.json();
@@ -364,11 +409,6 @@ export async function submitFileForProcessing(params: {
   const resolvedJobId = params.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   try {
-    // Read file data as base64 from the URI
-const base64Data = await readAsStringAsync(params.fileUri, {
-      encoding: "base64" as any,
-    });
-
     // Create FormData with properly formatted file
     const form = new FormData();
     const fileBlob = {
@@ -389,12 +429,144 @@ const data = await makeRequest<AiJobStatusResponse>(
       () => authedFetch("/process-file", { method: "POST", body: form }, UPLOAD_TIMEOUT),
       1 // Only 1 retry for uploads
     );
-return {
+
+    // Log skipped files so user knows
+    if (data.status === "skipped") {
+      console.log(`[API] File skipped (already indexed): ${params.fileName}`);
+    }
+
+    return {
       jobId: data.job_id,
       status: data.status,
     };
   } catch (error) {
 throw error;
+  }
+}
+
+export async function checkIndexedFiles(fileHashes: string[]): Promise<{
+  indexed: string[];
+  new_count: number;
+  indexed_count: number;
+}> {
+  const userId = requireUserId();
+  
+  try {
+    const response = await makeRequest<{
+      indexed: string[];
+      new_count: number;
+      indexed_count: number;
+    }>(
+      () => authedFetch("/check-indexed-files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          file_hashes: fileHashes,
+        }),
+      }, DEFAULT_TIMEOUT),
+      2
+    );
+
+    return response;
+  } catch (error) {
+    console.warn("[apiClient] Failed to check indexed files:", error);
+    throw error;
+  }
+}
+
+export async function checkScanDelta(files: DeltaScanRequestFile[]): Promise<DeltaScanResponse> {
+  const userId = requireUserId();
+
+  try {
+    return await makeRequest<DeltaScanResponse>(
+      () =>
+        authedFetch(
+          "/scan-delta",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              user_id: userId,
+              files,
+            }),
+          },
+          DEFAULT_TIMEOUT
+        ),
+      2
+    );
+  } catch (error) {
+    // Backward compatibility: some local engine builds expose /scan but not /scan-delta.
+    if (error instanceof HttpError && (error.status === 404 || error.status === 501)) {
+      try {
+        const legacy = await makeRequest<{ user_id: string; queued: number; queue: any[] }>(
+          () =>
+            authedFetch(
+              "/scan",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  user_id: userId,
+                  files: files.map((f) => ({
+                    file_path: f.file_path,
+                    file_name: f.file_name,
+                    file_hash: f.file_hash,
+                    file_type: f.file_type,
+                    last_modified: f.last_modified,
+                  })),
+                }),
+              },
+              DEFAULT_TIMEOUT
+            ),
+          1
+        );
+
+        const queued = Array.isArray(legacy.queue) ? legacy.queue : [];
+        return {
+          total_files: files.length,
+          indexed: Math.max(0, files.length - queued.length),
+          pending: queued.length,
+          processing: 0,
+          failed: 0,
+          new_count: queued.length,
+          updated_count: 0,
+          skipped_count: Math.max(0, files.length - queued.length),
+          queue: queued.map((q: any) => ({
+            file_path: String(q.file_path || ""),
+            file_name: String(q.file_name || ""),
+            file_hash: String(q.file_hash || ""),
+            file_type: (q.file_type === "image" ? "image" : "document") as "image" | "document",
+            last_modified: Number(q.last_modified || Date.now()),
+            change_type: "new" as const,
+          })),
+        };
+      } catch {
+        // Fall through to local-first fallback below.
+      }
+
+      // Local-first fallback: allow queueing and let process-file dedup/skip server-side.
+      return {
+        total_files: files.length,
+        indexed: 0,
+        pending: files.length,
+        processing: 0,
+        failed: 0,
+        new_count: files.length,
+        updated_count: 0,
+        skipped_count: 0,
+        queue: files.map((f) => ({
+          file_path: f.file_path,
+          file_name: f.file_name,
+          file_hash: f.file_hash,
+          file_type: f.file_type,
+          last_modified: f.last_modified,
+          change_type: "new" as const,
+        })),
+      };
+    }
+
+    throw error;
   }
 }
 
@@ -407,11 +579,11 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
   return {
     jobId: data.job_id,
     status: data.status,
-    progress: data.progress,
-    currentStep: data.current_step,
+    progress: typeof data.progress === "number" ? data.progress : 0,
+    currentStep: data.current_step ?? "Queued",
     fileName: data.file_name,
     fileType: data.file_type,
-    chunksProcessed: data.chunks_processed,
+    chunksProcessed: typeof data.chunks_processed === "number" ? data.chunks_processed : 0,
     error: data.error,
   };
 }
@@ -436,6 +608,7 @@ export async function queryMemory(payload: {
   query: string;
   model?: string;
   topK?: number;
+  fileType?: "all" | "image" | "document";
 }): Promise<QueryResponse> {
   const userId = requireUserId();
   const modelToUse = payload.model || "llama3:8b";
@@ -452,6 +625,7 @@ export async function queryMemory(payload: {
             user_id: userId,
             model: modelToUse,
             top_k: payload.topK ?? 5,
+            file_type: payload.fileType ?? "all",
           }),
         },
         QUERY_TIMEOUT
@@ -467,9 +641,9 @@ response.images.forEach((img, idx) => {
   return response;
 }
 
-export async function getIndexStats() {
+export async function getIndexStats(): Promise<IndexStatsResponse> {
   const userId = requireUserId();
-  return makeRequest<any>(
+  return makeRequest<IndexStatsResponse>(
     () => authedFetch(`/index-stats?user_id=${encodeURIComponent(userId)}`, undefined, DEFAULT_TIMEOUT),
     2
   );

@@ -64,11 +64,29 @@ class JobStore:
                     updated_at REAL
                 )
             """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS file_registry (
+                    file_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_hash TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    last_modified REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    indexed_at REAL,
+                    updated_at REAL,
+                    error TEXT
+                )
+            """)
             
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON jobs(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON jobs(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_user_id ON image_metadata(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_file_hash ON image_metadata(file_hash)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_user_path ON file_registry(user_id, file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_registry_user_status ON file_registry(user_id, status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_registry_user_modified ON file_registry(user_id, last_modified)")
             
             conn.commit()
             conn.close()
@@ -340,6 +358,380 @@ class JobStore:
             print(f"[JobStore] ERROR: Failed to delete image metadata: {e}")
             return False
 
+    @staticmethod
+    def build_file_id(user_id: str, file_path: str) -> str:
+        payload = f"{user_id}::{file_path}".encode("utf-8", errors="ignore")
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _normalize_registry_file_type(file_type: str) -> str:
+        normalized = (file_type or "").strip().lower()
+        if normalized in {"image", "photo", "picture"}:
+            return "image"
+        return "document"
+
+    def get_registry_entry(self, user_id: str, file_path: str) -> Optional[Dict]:
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM file_registry
+                WHERE user_id = ? AND file_path = ?
+            """,
+                (user_id, file_path),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to get registry entry for {file_path}: {e}")
+            return None
+
+    def upsert_registry_record(
+        self,
+        user_id: str,
+        file_path: str,
+        file_hash: str,
+        file_type: str,
+        last_modified: float,
+        status: str,
+        indexed_at: Optional[float] = None,
+        error: Optional[str] = None,
+    ) -> str:
+        file_id = self.build_file_id(user_id, file_path)
+        now = time.time()
+        normalized_type = self._normalize_registry_file_type(file_type)
+
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO file_registry
+                (file_id, user_id, file_path, file_hash, file_type, last_modified, status, indexed_at, updated_at, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET
+                    file_hash = excluded.file_hash,
+                    file_type = excluded.file_type,
+                    last_modified = excluded.last_modified,
+                    status = excluded.status,
+                    indexed_at = excluded.indexed_at,
+                    updated_at = excluded.updated_at,
+                    error = excluded.error
+            """,
+                (
+                    file_id,
+                    user_id,
+                    file_path,
+                    file_hash,
+                    normalized_type,
+                    float(last_modified),
+                    status,
+                    indexed_at,
+                    now,
+                    error,
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to upsert registry record for {file_path}: {e}")
+
+        return file_id
+
+    def classify_scan_delta(self, user_id: str, files: List[Dict[str, Any]]) -> Dict[str, Any]:
+        queue: List[Dict[str, Any]] = []
+        new_count = 0
+        updated_count = 0
+        skipped_count = 0
+
+        for file in files:
+            file_path = (
+                file.get("file_path")
+                or file.get("path")
+                or file.get("location")
+                or ""
+            )
+            if not file_path:
+                continue
+
+            raw_last_modified = (
+                file.get("last_modified")
+                or file.get("modified_at")
+                or file.get("modifiedAt")
+                or time.time()
+            )
+            try:
+                last_modified = float(raw_last_modified)
+            except Exception:
+                last_modified = float(time.time())
+
+            file_hash = (
+                file.get("file_hash")
+                or file.get("fingerprint")
+                or hashlib.sha256(f"{file_path}::{int(last_modified)}".encode("utf-8")).hexdigest()
+            )
+            file_type = file.get("file_type") or file.get("type") or "document"
+            file_name = file.get("file_name") or file.get("name") or Path(file_path).name
+
+            existing = self.get_registry_entry(user_id, file_path)
+            if existing is None:
+                self.upsert_registry_record(
+                    user_id=user_id,
+                    file_path=file_path,
+                    file_hash=file_hash,
+                    file_type=file_type,
+                    last_modified=last_modified,
+                    status="pending",
+                )
+                queue.append(
+                    {
+                        "file_path": file_path,
+                        "file_name": file_name,
+                        "file_hash": file_hash,
+                        "file_type": self._normalize_registry_file_type(file_type),
+                        "last_modified": last_modified,
+                        "change_type": "new",
+                    }
+                )
+                new_count += 1
+                continue
+
+            existing_modified = float(existing.get("last_modified") or 0.0)
+            existing_hash = str(existing.get("file_hash") or "")
+            is_updated = (last_modified > existing_modified + 1e-6) or (existing_hash != str(file_hash))
+
+            if is_updated:
+                self.upsert_registry_record(
+                    user_id=user_id,
+                    file_path=file_path,
+                    file_hash=file_hash,
+                    file_type=file_type,
+                    last_modified=last_modified,
+                    status="pending",
+                )
+                queue.append(
+                    {
+                        "file_path": file_path,
+                        "file_name": file_name,
+                        "file_hash": file_hash,
+                        "file_type": self._normalize_registry_file_type(file_type),
+                        "last_modified": last_modified,
+                        "change_type": "updated",
+                    }
+                )
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+        counts = self.get_registry_counts(user_id)
+        return {
+            "queue": queue,
+            "new_count": new_count,
+            "updated_count": updated_count,
+            "skipped_count": skipped_count,
+            **counts,
+        }
+
+    def get_registry_counts(self, user_id: str) -> Dict[str, int]:
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_files,
+                    SUM(CASE WHEN status = 'indexed' THEN 1 ELSE 0 END) AS indexed,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+                FROM file_registry
+                WHERE user_id = ?
+            """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                return {
+                    "total_files": 0,
+                    "indexed": 0,
+                    "pending": 0,
+                    "processing": 0,
+                    "failed": 0,
+                }
+
+            return {
+                "total_files": int(row[0] or 0),
+                "indexed": int(row[1] or 0),
+                "pending": int(row[2] or 0),
+                "processing": int(row[3] or 0),
+                "failed": int(row[4] or 0),
+            }
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to get registry counts for {user_id}: {e}")
+            return {
+                "total_files": 0,
+                "indexed": 0,
+                "pending": 0,
+                "processing": 0,
+                "failed": 0,
+            }
+
+    def get_registry_file_type_stats(self, user_id: str) -> Dict[str, int]:
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT file_type, COUNT(*)
+                FROM file_registry
+                WHERE user_id = ?
+                GROUP BY file_type
+            """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+
+            stats = {
+                "image": 0,
+                "audio": 0,
+                "video": 0,
+                "document": 0,
+                "text": 0,
+                "total": 0,
+            }
+
+            for file_type, count in rows:
+                normalized = str(file_type or "").lower()
+                c = int(count or 0)
+                if normalized == "image":
+                    stats["image"] += c
+                else:
+                    stats["document"] += c
+                stats["total"] += c
+
+            return stats
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to get file type stats for {user_id}: {e}")
+            return {
+                "image": 0,
+                "audio": 0,
+                "video": 0,
+                "document": 0,
+                "text": 0,
+                "total": 0,
+            }
+
+    def get_processing_registry_file(self, user_id: str) -> Optional[Dict]:
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM file_registry
+                WHERE user_id = ? AND status = 'processing'
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to get processing registry file for {user_id}: {e}")
+            return None
+
+    def mark_registry_processing(self, user_id: str, file_path: str) -> None:
+        existing = self.get_registry_entry(user_id, file_path)
+        if not existing:
+            return
+        self.upsert_registry_record(
+            user_id=user_id,
+            file_path=file_path,
+            file_hash=existing.get("file_hash", ""),
+            file_type=existing.get("file_type", "document"),
+            last_modified=float(existing.get("last_modified") or time.time()),
+            status="processing",
+            indexed_at=existing.get("indexed_at"),
+            error=None,
+        )
+
+    def mark_registry_indexed(
+        self,
+        user_id: str,
+        file_path: str,
+        file_hash: str,
+        file_type: str,
+        last_modified: float,
+    ) -> None:
+        self.upsert_registry_record(
+            user_id=user_id,
+            file_path=file_path,
+            file_hash=file_hash,
+            file_type=file_type,
+            last_modified=last_modified,
+            status="indexed",
+            indexed_at=time.time(),
+            error=None,
+        )
+
+    def mark_registry_failed(self, user_id: str, file_path: str, error: str) -> None:
+        existing = self.get_registry_entry(user_id, file_path)
+        if not existing:
+            return
+        self.upsert_registry_record(
+            user_id=user_id,
+            file_path=file_path,
+            file_hash=existing.get("file_hash", ""),
+            file_type=existing.get("file_type", "document"),
+            last_modified=float(existing.get("last_modified") or time.time()),
+            status="failed",
+            indexed_at=existing.get("indexed_at"),
+            error=(error or "")[:500],
+        )
+
+    def clear_registry_for_user(self, user_id: str) -> int:
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_registry WHERE user_id = ?", (user_id,))
+            conn.commit()
+            deleted = cursor.rowcount
+            conn.close()
+            return deleted
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to clear registry for {user_id}: {e}")
+            return 0
+
+    def get_indexed_hashes(self, user_id: str, file_hashes: List[str]) -> List[str]:
+        if not file_hashes:
+            return []
+        try:
+            placeholders = ",".join(["?"] * len(file_hashes))
+            conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT file_hash FROM file_registry
+                WHERE user_id = ? AND status = 'indexed' AND file_hash IN ({placeholders})
+            """,
+                [user_id, *file_hashes],
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            return [str(r[0]) for r in rows]
+        except Exception as e:
+            print(f"[JobStore] ERROR: Failed to get indexed hashes for {user_id}: {e}")
+            return []
+
 
 # ============================================================================
 # LOCAL STORAGE BACKEND
@@ -374,7 +766,7 @@ class LocalStorageBackend:
                     self._write_json(db_file, [])
 
     @staticmethod
-    def _compute_hash(file_path: str) -> str:
+    def _compute_hash(file_path: str) -> str | None:
         """Compute SHA-256 hash of file content"""
         sha256_hash = hashlib.sha256()
         try:
@@ -382,8 +774,8 @@ class LocalStorageBackend:
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
             return sha256_hash.hexdigest()
-        except Exception as e:
-            return ""
+        except Exception:
+            return None
 
     def store_discovered_files(self, files: List[Dict]) -> Tuple[int, List[str]]:
         """Stage 1: Store all discovered files locally"""
@@ -395,7 +787,7 @@ class LocalStorageBackend:
             for file in files:
                 try:
                     file_hash = self._compute_hash(file["path"])
-                    if not file_hash or file_hash in hash_map:
+                    if file_hash is None or file_hash in hash_map:
                         continue
                     file_record = {
                         "id": f"file_{len(hash_map)}_{int(time.time() * 1000)}",
@@ -412,7 +804,7 @@ class LocalStorageBackend:
                     }
                     hash_map[file_hash] = file_record
                     new_ids.append(file_record["id"])
-                except Exception as e:
+                except Exception:
                     continue
 
             all_files = list(hash_map.values())
@@ -422,7 +814,7 @@ class LocalStorageBackend:
                 totalSize=sum(f["size"] for f in all_files),
             )
             return len(all_files), new_ids
-        except Exception as e:
+        except Exception:
             return 0, []
 
     def queue_files_for_processing(self, file_ids: List[str]) -> int:
@@ -430,8 +822,9 @@ class LocalStorageBackend:
         try:
             files = self._read_json(self.files_db)
             queue = self._read_json(self.queue_db)
+            existing_file_ids = {q["fileId"] for q in queue}
             files_to_queue = [
-                f for f in files if f["id"] in file_ids and not f["indexed"]
+                f for f in files if f["id"] in file_ids and not f["indexed"] and f["id"] not in existing_file_ids
             ]
             for file in files_to_queue:
                 queue_item = {
@@ -446,7 +839,7 @@ class LocalStorageBackend:
                 queue.append(queue_item)
             self._write_json(self.queue_db, queue)
             return len(files_to_queue)
-        except Exception as e:
+        except Exception:
             return 0
 
     def update_processing_status(
@@ -471,14 +864,14 @@ class LocalStorageBackend:
                 item["completedAt"] = int(time.time() * 1000)
             if status == "complete":
                 files = self._read_json(self.files_db)
-                file = next((f for f in files if f["id"] == item["fileId"]), None)
-                if file:
+                file = next((f for f in files if f["id"] == item.get("fileId")), None)
+                if file is not None:
                     file["indexed"] = True
                     file["indexedAt"] = int(time.time() * 1000)
                     self._write_json(self.files_db, files)
             self._write_json(self.queue_db, queue)
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def get_files_by_type(self, file_type: str) -> List[Dict]:
@@ -539,16 +932,28 @@ class LocalStorageBackend:
 
     def _read_json(self, file_path: Path) -> any:
         try:
-            with open(file_path) as f:
+            with open(file_path, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            return [] if file_path.suffix == ".json" and "db" in str(file_path) else {}
+        except Exception:
+            # Ensure correct default types based on file
+            if file_path == self.files_db or file_path == self.queue_db:
+                return []
+            if file_path == self.metadata_db:
+                return {
+                    "totalFiles": 0,
+                    "totalSize": 0,
+                    "lastSync": None,
+                    "indexProgress": 0,
+                }
+            return {}
 
     def _write_json(self, file_path: Path, data: any):
         try:
-            with open(file_path, "w") as f:
+            temp_path = str(file_path) + ".tmp"
+            with open(temp_path, "w") as f:
                 json.dump(data, f, indent=2)
-        except Exception as e:
+            os.replace(temp_path, file_path)
+        except Exception:
             pass
 
     def _update_metadata(self, **kwargs):
@@ -645,7 +1050,7 @@ class VectorStore:
     ) -> list[dict]:
         """Search for top_k similar chunks"""
         import numpy as np
-        if self._index.ntotal == 0:
+        if self._index.ntotal == 0 or not query_embedding:
             return []
         vec = np.array([query_embedding], dtype=np.float32)
         fetch_k = min(top_k * 15, self._index.ntotal)
@@ -673,8 +1078,17 @@ class VectorStore:
     ) -> list[dict]:
         """Search for top_k chunks of a specific file type"""
         import numpy as np
-        if self._index.ntotal == 0:
+        if self._index.ntotal == 0 or not query_embedding:
             return []
+
+        normalized_type = (file_type or "").strip().lower()
+        if normalized_type == "document":
+            allowed_types = {"document", "pdf", "docx", "txt"}
+        elif normalized_type == "image":
+            allowed_types = {"image"}
+        else:
+            allowed_types = {normalized_type}
+
         vec = np.array([query_embedding], dtype=np.float32)
         fetch_k = min(top_k * 30, self._index.ntotal)
         scores, indices = self._index.search(vec, fetch_k)
@@ -687,7 +1101,7 @@ class VectorStore:
             meta = self._metadata[idx]
             if user_id and meta.get("user_id") != user_id:
                 continue
-            if meta.get("file_type") != file_type:
+            if meta.get("file_type") not in allowed_types:
                 continue
             results.append({**meta, "score": float(score)})
             if len(results) >= top_k:
@@ -814,6 +1228,10 @@ class IndexRegistry:
                 self._records = json.loads(self.REGISTRY_PATH.read_text())
             except Exception:
                 self._records = {}
+                try:
+                    self.REGISTRY_PATH.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     @staticmethod
     def _key(user_id: str, file_hash: str) -> str:

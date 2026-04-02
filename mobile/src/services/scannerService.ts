@@ -153,7 +153,6 @@ export async function pickDocuments(): Promise<ScannableFile[]> {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "text/plain",
       "image/*",
-      "audio/*",
     ],
     // Ensures iOS providers return an uploadable local file URI.
     copyToCacheDirectory: true,
@@ -174,7 +173,7 @@ export async function pickDocuments(): Promise<ScannableFile[]> {
     const fileSize = await getFileSizeAsync(resolvedUri);
 
     const mimeType = asset.mimeType || extToMime(asset.name);
-    const modifiedAt = Date.now();
+    const modifiedAt = Number((asset as unknown as { lastModified?: number }).lastModified ?? 0);
     files.push({
       id: `${resolvedUri}-${fileSize}`,
       uri: resolvedUri,
@@ -252,7 +251,12 @@ async function scanMediaAssets(
         }
 
         const mimeType = asset.mediaType === "audio" ? "audio/mpeg" : "image/jpeg";
-        const modifiedAt = Number(asset.modificationTime ?? Date.now());
+        const modifiedAt = Number(
+          (assetInfo as unknown as { modificationTime?: number; creationTime?: number }).modificationTime
+            ?? asset.modificationTime
+            ?? (assetInfo as unknown as { creationTime?: number }).creationTime
+            ?? 0
+        );
         
         let size = 0;
         try {
@@ -432,7 +436,7 @@ const remaining = maxFiles - allPaths.length;
   }
 
   const files: ScannableFile[] = [];
-  const supportedExtensions = /\.(pdf|doc|docx|txt|xls|xlsx|ppt|pptx|json|csv|md|jpg|jpeg|png|webp|gif|bmp|mp3|m4a|wav|ogg|flac|aac|mov|mp4|avi|mkv|wmv|m4v)$/i;
+  const supportedExtensions = /\.(pdf|doc|docx|txt|xls|xlsx|ppt|pptx|json|csv|md|jpg|jpeg|png|webp|gif|bmp)$/i;
 
   for (let i = 0; i < allPaths.length; i++) {
     const path = allPaths[i];
@@ -459,7 +463,11 @@ const remaining = maxFiles - allPaths.length;
       }
 
       const mimeType = extToMime(name);
-      const modifiedAt = Number((info as unknown as { modificationTime?: number }).modificationTime ?? Date.now());
+      const modifiedAt = Number(
+        (info as unknown as { modificationTime?: number; creationTime?: number }).modificationTime
+          ?? (info as unknown as { creationTime?: number }).creationTime
+          ?? 0
+      );
       const size = Number((info as unknown as { size?: number }).size ?? 0);
       
       // Skip empty files and files larger than 500MB
@@ -493,7 +501,7 @@ export async function scanDeviceFiles(options?: {
   onProgress?: (p: ScanProgress) => void;
 }): Promise<ScannableFile[]> {
   const includeImages = options?.includeImages ?? true;
-  const includeAudio = options?.includeAudio ?? true;
+  const includeAudio = options?.includeAudio ?? false;
   const includeDocuments = options?.includeDocuments ?? true;
   const mediaLimit = options?.mediaLimit ?? 2500;  // Scan up to 2500 photos/audio to handle large libraries
   const onProgress = options?.onProgress;

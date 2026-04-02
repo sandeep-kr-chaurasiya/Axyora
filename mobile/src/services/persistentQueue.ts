@@ -11,7 +11,7 @@ import { makeDirectoryAsync, copyAsync, getInfoAsync } from "expo-file-system/le
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 
-import { getJobStatus, submitFileForProcessing } from "./apiClient";
+import { getJobStatus, submitFileForProcessing, checkScanDelta } from "./apiClient";
 import type { ScannableFile } from "./scannerService";
 
 const QUEUE_STORAGE_KEY = "@axyora/persistent-queue";
@@ -115,9 +115,76 @@ class PersistentQueue extends EventEmitter {
     }
   }
 
-  enqueue(files: ScannableFile | ScannableFile[]): void {
-    const filesArray = Array.isArray(files) ? files : [files];
-    const newItems: QueueItem[] = filesArray.map((file) => ({
+  async enqueue(files: ScannableFile | ScannableFile[]): Promise<void> {
+    const filesArray = (Array.isArray(files) ? files : [files]).filter(
+      (f) => f.type === "image" || f.type === "document"
+    );
+    
+    if (filesArray.length === 0) {
+      return;
+    }
+
+    // Ask backend registry which files are new/updated.
+    try {
+      const delta = await checkScanDelta(
+        filesArray.map((f) => ({
+          file_path: f.location,
+          file_name: f.name,
+          file_hash: f.fingerprint,
+          file_type: f.type === "image" ? "image" : "document",
+          last_modified: f.modifiedAt,
+        }))
+      );
+
+      const allowedPaths = new Set(delta.queue.map((q) => q.file_path));
+      const newFiles = filesArray.filter((f) => allowedPaths.has(f.location));
+
+      this.emit("registry-stats", {
+        total_files: delta.total_files,
+        indexed: delta.indexed,
+        pending: delta.pending,
+        processing: delta.processing,
+        failed: delta.failed,
+      });
+
+      if (newFiles.length === 0) {
+        console.log(`[Queue] All ${filesArray.length} files already indexed, skipping enqueue`);
+        this.emit("queue-size", this.state.items.length);
+        return;
+      }
+
+      console.log(
+        `[Queue] Delta scan: ${filesArray.length} files -> ${newFiles.length} queued (${delta.new_count} new, ${delta.updated_count} updated, ${delta.skipped_count} unchanged)`
+      );
+
+      this._enqueueInternal(newFiles);
+    } catch (error) {
+      console.warn("[Queue] Dedup check unavailable; falling back to local queue dedup:", error);
+      this._enqueueInternal(filesArray);
+      this.emit("queue-dedup-error", {
+        count: filesArray.length,
+        message: "Dedup endpoint unavailable. Falling back to local queue dedup.",
+      });
+    }
+  }
+
+  private _enqueueInternal(files: ScannableFile[]): void {
+    if (files.length === 0) {
+      return;
+    }
+
+    const existingKeys = new Set(
+      this.state.items.map((i) => `${i.file.location}::${i.file.modifiedAt}`)
+    );
+    const dedupedFiles = files.filter(
+      (file) => !existingKeys.has(`${file.location}::${file.modifiedAt}`)
+    );
+
+    if (dedupedFiles.length === 0) {
+      return;
+    }
+
+    const newItems: QueueItem[] = dedupedFiles.map((file) => ({
       id: `${file.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       file,
       status: "pending",
@@ -285,6 +352,18 @@ class PersistentQueue extends EventEmitter {
 
       if (!submitted || !submitted.jobId) {
         throw new Error("No job ID returned from server");
+      }
+
+      // Handle skipped files (already indexed)
+      if (submitted.status === "skipped") {
+        item.status = "done";
+        item.completedAt = Date.now();
+        item.processingTime = item.completedAt - (item.attemptedAt ?? item.createdAt);
+        item.currentStep = "Skipped (already indexed)";
+        this.emitProgress(item);
+        this.state.currentIndex++;
+        this.checkpoint();
+        return;
       }
 
       item.jobId = submitted.jobId;

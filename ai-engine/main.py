@@ -4,7 +4,7 @@ The core intelligence hub for local memory processing.
 Migrated to Groq API Cloud Reasoning.
 
 This module uses consolidated, professional file organization:
-- storage.py: JobStore, LocalStorageBackend, VectorStore, IndexRegistry
+- storage.py: JobStore, VectorStore, IndexRegistry, local file storage helpers
 - processing.py: File extraction, chunking, embeddings, image captioning
 - rag.py: QueryEngine, ContextBuilder, GroqClient
 - utilities.py: CircuitBreaker, RetryPolicy
@@ -21,15 +21,15 @@ import gc
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 import uuid
+import logging
 
 try:
     import torch
 except Exception:
     torch = None
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Query, Path
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 # ============================================================================
 # IMPORTS FROM CONSOLIDATED MODULES
@@ -40,10 +40,12 @@ from models import (
     QueryRequest,
     AskRequest,
     ScanRequest,
+    CheckIndexedFilesRequest,
+    DeltaScanRequest,
 )
 
 # Storage layer
-from storage import JobStore, LocalStorageBackend, VectorStore, IndexRegistry, get_local_storage
+from storage import JobStore, VectorStore, IndexRegistry, get_local_storage
 
 # Processing layer
 from processing import detect_file_type, process_file_bytes, get_embedding_engine as processing_get_embedding_engine
@@ -54,13 +56,14 @@ from rag import QueryEngine
 # Configuration & logging
 from production_config import (
     MAX_FILE_SIZE_BYTES,
-    SUPPORTED_FILE_TYPES,
-    JOB_RETENTION_SECONDS,
     PIPELINE_WORKERS,
     JOB_QUEUE_MAXSIZE,
     EMBED_MAX_CONCURRENCY,
     FILE_PROCESSING_TIMEOUT,
     EMBEDDING_TIMEOUT,
+    INGESTION_LIBRARY_PATH,
+    INGESTION_USER_ID,
+    INGESTION_SCAN_INTERVAL_SECONDS,
 )
 
 # Ingestion
@@ -81,6 +84,9 @@ job_store: JobStore = None
 _job_queue: asyncio.Queue[dict] = None
 _workers: list[asyncio.Task] = []
 _embedding_semaphore: asyncio.Semaphore | None = None
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+logger = logging.getLogger(__name__)
 
 
 def get_embedding_engine():
@@ -119,14 +125,31 @@ def get_ingestion_engine():
     """Get or create ingestion engine singleton"""
     global _ingestion_engine
     if _ingestion_engine is None:
-        _ingestion_engine = IngestionEngine("~/Axyora_Library", "local_user", _queue_local_file)
+        _ingestion_engine = IngestionEngine(INGESTION_LIBRARY_PATH, INGESTION_USER_ID, _queue_local_file)
     return _ingestion_engine
 
 def _queue_local_file(**kwargs):
     """Callback for ingestion.py to queue a local file for processing."""
-    registry = get_index_registry()
-    if registry.get(kwargs["user_id"], kwargs["file_hash"]):
+    if not job_store:
         return
+
+    incoming_modified = float(kwargs.get("modified_at") or time.time())
+    existing = job_store.get_registry_entry(kwargs["user_id"], kwargs["file_path"])
+    if existing:
+        existing_modified = float(existing.get("last_modified") or 0.0)
+        if existing.get("status") == "indexed" and incoming_modified <= existing_modified:
+            return
+
+    job_store.upsert_registry_record(
+        user_id=kwargs["user_id"],
+        file_path=kwargs["file_path"],
+        file_hash=kwargs.get("file_hash") or hashlib.sha256(
+            f"{kwargs['file_path']}::{int(incoming_modified)}".encode("utf-8")
+        ).hexdigest(),
+        file_type=kwargs.get("file_type", "document"),
+        last_modified=incoming_modified,
+        status="pending",
+    )
     
     job_id = f"local-{int(time.time())}-{uuid.uuid4().hex[:4]}"
     try:
@@ -138,10 +161,13 @@ def _queue_local_file(**kwargs):
             "file_type": kwargs["file_type"], "user_id": kwargs["user_id"], 
             "file_path": kwargs["file_path"], "modified_at": kwargs["modified_at"]
         }
-        asyncio.run_coroutine_threadsafe(_job_queue.put(payload), asyncio.get_event_loop())
+        if _main_loop is None:
+            logger.warning("[Ingestion] Main event loop unavailable; skipping queued file %s", kwargs.get("file_path", ""))
+            return
+        asyncio.run_coroutine_threadsafe(_job_queue.put(payload), _main_loop)
         job_store.create_job(job_id, kwargs["user_id"], kwargs["file_name"], kwargs["file_type"])
     except Exception as e:
-        pass
+        logger.exception("[Ingestion] Failed to queue local file %s: %s", kwargs.get("file_path", ""), e)
 
 def _update_job(job_id: str, **kwargs):
     if job_store:
@@ -175,6 +201,15 @@ async def _job_worker(worker_id: int):
             await _run_pipeline(**payload)
         except Exception as exc:
             _update_job(job_id, status="error", current_step="Pipeline Error", error=str(exc)[:500], completed_at=time.time())
+            if job_store:
+                try:
+                    job_store.mark_registry_failed(
+                        payload.get("user_id", ""),
+                        payload.get("file_path", ""),
+                        str(exc),
+                    )
+                except Exception:
+                    pass
         finally:
             try:
                 _job_queue.task_done()
@@ -188,6 +223,9 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
     start_time = time.time()
     local_storage = get_local_storage()
     try:
+        if job_store:
+            job_store.mark_registry_processing(user_id, file_path)
+
         _update_job(job_id, status="processing", progress=5, current_step="Hashing...")
         file_hash = hashlib.sha256(file_bytes).hexdigest()
         
@@ -252,6 +290,15 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
         registry.persist()
         v_store.persist()
 
+        if job_store:
+            job_store.mark_registry_indexed(
+                user_id=user_id,
+                file_path=file_path,
+                file_hash=file_hash,
+                file_type=file_type,
+                last_modified=float(modified_at or time.time()),
+            )
+
         # Update local storage to mark as indexed (completed)
         # Find the queue item for this job and mark it as complete
         queue = local_storage.get_pending_files()
@@ -265,27 +312,43 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
         raise e
 
 # ---------------------------------------------------------------------------
+# Background Ingestion Task
+# ---------------------------------------------------------------------------
+
+async def _start_background_ingestion():
+    """Continuously scan for new files and queue them automatically."""
+    ingestion = get_ingestion_engine()
+
+    while True:
+        try:
+            ingestion.scan_directory(auto_queue=True)
+        except Exception as exc:
+            logger.exception("[Ingestion] Background scan failed: %s", exc)
+
+        await asyncio.sleep(max(1, INGESTION_SCAN_INTERVAL_SECONDS))
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global job_store, _job_queue, _workers, _embedding_semaphore
+    global job_store, _job_queue, _workers, _embedding_semaphore, _main_loop
     
     job_store = JobStore()
     _job_queue = asyncio.Queue(maxsize=JOB_QUEUE_MAXSIZE)
+    _main_loop = asyncio.get_running_loop()
     _embedding_semaphore = asyncio.Semaphore(max(1, EMBED_MAX_CONCURRENCY))
     worker_count = max(1, PIPELINE_WORKERS)
     _workers = [asyncio.create_task(_job_worker(i + 1)) for i in range(worker_count)]
     
-    ingestion = get_ingestion_engine()
-    ingestion.scan_directory()
-    ingestion.start_monitoring()
+    # Start continuous background ingestion (auto-scan every few seconds)
+    asyncio.create_task(_start_background_ingestion())
     
     yield
     
     for w in _workers: w.cancel()
-    if _ingestion_engine: _ingestion_engine.stop_monitoring()
+    # if _ingestion_engine: _ingestion_engine.stop_monitoring()
     if _index_registry: _index_registry.persist()
     if _vector_store: _vector_store.persist()
 
@@ -340,69 +403,109 @@ async def metrics():
 @app.get("/current-processing")
 async def get_current_processing(user_id: str = Query(...)):
     """Get the file currently being processed for a user"""
-    processing_jobs = job_store.get_processing_jobs() if job_store else []
-    
-    # Find the most recent processing job for this user
-    user_job = None
-    for job in processing_jobs:
-        if job.get("user_id") == user_id:
-            user_job = job
-            break
-    
-    if not user_job:
-        return {
-            "current_file": None,
-            "queue_size": _job_queue.qsize() if _job_queue else 0,
-            "total_processed": 0,
-            "total_in_queue": 0,
-            "total_failed": 0,
-        }
-    
-    # Get user's job stats
-    try:
-        user_jobs = job_store.get_user_jobs(user_id, limit=5000) if job_store else []
-        total_done = sum(1 for j in user_jobs if j.get("status") == "done")
-        total_failed = sum(1 for j in user_jobs if j.get("status") == "error")
-        total_pending = sum(1 for j in user_jobs if j.get("status") == "pending")
-    except Exception as e:
-        total_done = 0
-        total_failed = 0
-        total_pending = 0
-    
     queue_size = _job_queue.qsize() if _job_queue else 0
-    
+    counts = job_store.get_registry_counts(user_id) if job_store else {
+        "total_files": 0,
+        "indexed": 0,
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+    }
+
+    current_file = None
+    if job_store:
+        current = job_store.get_processing_registry_file(user_id)
+        if current:
+            path_value = str(current.get("file_path", "Unknown"))
+            file_name = path_value.rsplit("/", 1)[-1] if "/" in path_value else path_value
+            current_file = {
+                "job_id": "",
+                "file_name": file_name or "Unknown",
+                "file_type": current.get("file_type", "unknown"),
+                "status": current.get("status", "processing"),
+                "current_step": "Processing",
+                "progress": 0,
+                "created_at": current.get("updated_at"),
+            }
+
     return {
-        "current_file": {
-            "job_id": user_job.get("job_id"),
-            "file_name": user_job.get("file_name", "Unknown"),
-            "file_type": user_job.get("file_type", "unknown"),
-            "status": user_job.get("status", "processing"),
-            "current_step": user_job.get("current_step", "Processing"),
-            "progress": user_job.get("progress", 0),
-            "created_at": user_job.get("created_at"),
-        },
+        "current_file": current_file,
         "queue_size": queue_size,
-        "total_processed": total_done,
-        "total_in_queue": total_pending + queue_size,
-        "total_failed": total_failed,
+        "total_processed": counts.get("indexed", 0),
+        "total_in_queue": counts.get("pending", 0) + counts.get("processing", 0),
+        "total_failed": counts.get("failed", 0),
     }
 
 @app.get("/index-stats")
 async def index_stats(user_id: str = Query(...)):
-    stats = get_vector_store().user_stats(user_id)
-    try:
-        jobs = job_store.get_user_jobs(user_id, limit=5000) if job_store else []
-        processed_files = sum(1 for j in jobs if j.get("status") == "done")
-        stats["processed_files"] = processed_files
-    except Exception as e:
-        pass
-    return stats
+    counts = job_store.get_registry_counts(user_id) if job_store else {
+        "total_files": 0,
+        "indexed": 0,
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+    }
+    total_files = max(0, counts.get("total_files", 0))
+    indexed = max(0, counts.get("indexed", 0))
+    progress = int((indexed / total_files) * 100) if total_files > 0 else 0
+
+    return {
+        "total_files": total_files,
+        "indexed": indexed,
+        "pending": max(0, counts.get("pending", 0)),
+        "processing": max(0, counts.get("processing", 0)),
+        "failed": max(0, counts.get("failed", 0)),
+        "progress": progress,
+    }
 
 @app.post("/scan")
 async def scan(req: ScanRequest):
     registry = get_index_registry()
     queue = [f for f in req.files if not registry.get_by_path(req.user_id, f.get("file_path", ""))]
     return {"user_id": req.user_id, "queued": len(queue), "queue": queue}
+
+
+@app.post("/scan-delta")
+async def scan_delta(req: DeltaScanRequest):
+    if not job_store:
+        raise HTTPException(status_code=500, detail="Job store unavailable")
+
+    raw_files = [
+        {
+            "file_path": f.file_path,
+            "file_name": f.file_name,
+            "file_hash": f.file_hash,
+            "file_type": f.file_type,
+            "last_modified": f.last_modified,
+        }
+        for f in req.files
+    ]
+    result = job_store.classify_scan_delta(req.user_id, raw_files)
+    return {
+        "total_files": result.get("total_files", 0),
+        "indexed": result.get("indexed", 0),
+        "pending": result.get("pending", 0),
+        "processing": result.get("processing", 0),
+        "failed": result.get("failed", 0),
+        "new_count": result.get("new_count", 0),
+        "updated_count": result.get("updated_count", 0),
+        "skipped_count": result.get("skipped_count", 0),
+        "queue": result.get("queue", []),
+    }
+
+@app.post("/check-indexed-files")
+async def check_indexed_files(req: CheckIndexedFilesRequest):
+    """Check which files are already indexed by their hashes.
+    Returns list of file hashes that are already indexed."""
+    indexed_hashes: list[str] = []
+    if job_store:
+        indexed_hashes = job_store.get_indexed_hashes(req.user_id, req.file_hashes)
+    
+    return {
+        "indexed": indexed_hashes,
+        "new_count": len(req.file_hashes) - len(indexed_hashes),
+        "indexed_count": len(indexed_hashes)
+    }
 
 @app.post("/process-file")
 async def process_file(
@@ -429,6 +532,57 @@ async def process_file(
     file_type = detect_file_type(file.filename, content)
     if file_type == "unknown":
         raise HTTPException(status_code=415, detail="Unsupported file type")
+
+    # Check registry and skip unchanged indexed files
+    file_path_for_registry = file_path or file.filename
+    if not job_store:
+        raise HTTPException(status_code=500, detail="Job store unavailable")
+
+    existing_registry = job_store.get_registry_entry(user_id, file_path_for_registry)
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    if existing_registry:
+        existing_modified = float(existing_registry.get("last_modified") or 0.0)
+        incoming_modified = float(modified_at) if modified_at is not None else None
+        is_unchanged = (
+            incoming_modified is not None
+            and abs(incoming_modified - existing_modified) < 1e-6
+            and existing_registry.get("status") == "indexed"
+        )
+
+        if is_unchanged or (
+            existing_registry.get("status") == "indexed"
+            and str(existing_registry.get("file_hash") or "") == file_hash
+        ):
+            return {
+                "job_id": job_id,
+                "status": "skipped",
+                "message": f"File unchanged and already indexed: {file.filename}",
+                "file_name": file.filename,
+                "file_type": file_type,
+            }
+
+    job_store.upsert_registry_record(
+        user_id=user_id,
+        file_path=file_path_for_registry,
+        file_hash=file_hash,
+        file_type=file_type,
+        last_modified=float(modified_at or time.time()),
+        status="pending",
+    )
+
+    # Legacy hash registry for compatibility with existing code paths
+    registry = get_index_registry()
+    already_indexed = registry.get(user_id, file_hash)
+    if already_indexed and existing_registry and existing_registry.get("status") == "indexed":
+        # File is already processed, skip it
+        return {
+            "job_id": job_id,
+            "status": "skipped",
+            "message": f"File already indexed: {file.filename}",
+            "file_name": file.filename,
+            "file_type": file_type,
+        }
     
     job = job_store.create_job(job_id, user_id, file.filename, file_type)
     try:
@@ -439,6 +593,7 @@ async def process_file(
         })
     except asyncio.QueueFull:
         job_store.update_job(job_id, status="error", current_step="Queue full", error="Queue capacity reached")
+        job_store.mark_registry_failed(user_id, file_path_for_registry, "Queue capacity reached")
         raise HTTPException(status_code=429, detail="Processing queue is full. Try again shortly.")
     return job
 
@@ -468,7 +623,13 @@ async def query(req: QueryRequest, request: Request):
         effective_top_k = max(1, min(req.top_k, 20))
         
         result = await asyncio.to_thread(
-            get_query_engine().answer, req.query, req.user_id, effective_top_k, req.model
+            get_query_engine().answer,
+            req.query,
+            req.user_id,
+            effective_top_k,
+            req.model,
+            True,
+            req.file_type,
         )
         duration_ms = int((time.time() - start) * 1000)
         return {**result, "duration_ms": duration_ms}
@@ -504,26 +665,9 @@ async def job_status(job_id: str):
 @app.get("/stats/file-types/{user_id}")
 async def get_file_type_stats(user_id: str):
     """Get statistics of processed files by type"""
-    jobs = job_store.get_user_jobs(user_id, limit=500)
-    stats = {"image": 0, "audio": 0, "video": 0, "document": 0, "text": 0, "total": 0}
-    
-    for job in jobs:
-        file_type = job.get("file_type", "unknown")
-        if job.get("status") in ["done", "processing", "uploading"]:
-            # Map internal file types to display categories
-            if file_type == "image":
-                stats["image"] += 1
-            elif file_type == "audio":
-                stats["audio"] += 1
-            elif file_type in ["pdf", "docx", "doc"]:
-                stats["document"] += 1
-            elif file_type == "txt":
-                stats["text"] += 1
-            elif file_type != "unknown":
-                stats["text"] += 1
-            stats["total"] += 1
-    
-    return stats
+    if not job_store:
+        return {"image": 0, "audio": 0, "video": 0, "document": 0, "text": 0, "total": 0}
+    return job_store.get_registry_file_type_stats(user_id)
 
 @app.get("/jobs")
 async def list_jobs(user_id: str, limit: int = 50):
@@ -535,6 +679,7 @@ async def clear(user_id: str):
     get_vector_store().delete_by_user(user_id)
     get_index_registry().delete_by_user(user_id)
     job_store.cleanup_for_user(user_id)
+    job_store.clear_registry_for_user(user_id)
     return {"status": "cleared"}
 
 # ---------------------------------------------------------------------------

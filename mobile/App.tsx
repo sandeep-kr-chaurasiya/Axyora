@@ -149,7 +149,7 @@ export default function App() {
       <DiscoveryScreen
         onStartProcessing={async (files) => {
           if (files.length > 0) {
-            persistentQueue.enqueue(files);
+            await persistentQueue.enqueue(files);
           }
           await AsyncStorage.setItem(AUTO_SCAN_KEY, JSON.stringify({ status: "complete", totalCount: files.length }));
           setAutoScanDone(true);

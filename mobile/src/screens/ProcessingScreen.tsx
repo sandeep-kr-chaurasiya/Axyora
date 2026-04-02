@@ -22,8 +22,10 @@ import {
   checkEngineHealth,
   getResolvedApiBaseUrl,
   getFileTypeStats,
+  getIndexStats,
   getCurrentProcessing,
   type FileTypeStats,
+  type IndexStatsResponse,
   type CurrentProcessingInfo,
 } from "../services/apiClient";
 import { useAuth } from "../hooks/useAuth";
@@ -390,7 +392,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
   const [activeTab,        setActiveTab]        = useState<"overview" | "failing">("overview");
   const [liveProgress,     setLiveProgress]     = useState<{
     id: string;
-    file: ScannableFile;
+    file: { name: string; type?: string; uri?: string; mimeType?: string; };
     status: string;
     progress: number;
     step?: string;
@@ -402,6 +404,14 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     total_processed: 0,
     total_in_queue: 0,
     total_failed: 0,
+  });
+  const [indexStats, setIndexStats] = useState<IndexStatsResponse>({
+    total_files: 0,
+    indexed: 0,
+    pending: 0,
+    processing: 0,
+    failed: 0,
+    progress: 0,
   });
   const hasAutoStarted = useRef(false);
 
@@ -434,18 +444,6 @@ export function ProcessingScreen(props: { onDone: () => void }) {
       })),
   [history]);
 
-  const currentProcessing = useMemo(() => {
-    const active = processingImages.find(i =>
-      i.status === "uploading" || i.status === "processing" || i.status === "extracting" || i.status === "indexing"
-    );
-    if (active) return active;
-    if (displayCurrentFile?.file_name) {
-      const byName = processingImages.find(i => i.name === displayCurrentFile.file_name);
-      if (byName) return byName;
-    }
-    return null;
-  }, [processingImages, displayCurrentFile?.file_name]);
-
   const localCurrentFile = useMemo(() => {
     const item =
       history.find(i => ["uploading", "processing", "retrying"].includes(i.status)) ||
@@ -477,6 +475,18 @@ export function ProcessingScreen(props: { onDone: () => void }) {
   }, [liveProgress]);
 
   const displayCurrentFile = liveCurrentFile || localCurrentFile || currentProcessingData.current_file;
+
+  const currentProcessing = useMemo(() => {
+    const active = processingImages.find(i =>
+      i.status === "uploading" || i.status === "processing" || i.status === "extracting" || i.status === "indexing"
+    );
+    if (active) return active;
+    if (displayCurrentFile?.file_name) {
+      const byName = processingImages.find(i => i.name === displayCurrentFile?.file_name);
+      if (byName) return byName;
+    }
+    return null;
+  }, [processingImages, displayCurrentFile?.file_name]);
   const currentHistoryItem = useMemo(() => {
     if (!displayCurrentFile?.file_name) return null;
     return history.find(i => i.file?.name === displayCurrentFile.file_name) || null;
@@ -507,7 +517,36 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     [...history].slice(-14).reverse(),
   [history]);
 
-  const completionPct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
+  const effectiveStats = useMemo(() => {
+    const hasRegistryData =
+      indexStats.total_files > 0 ||
+      indexStats.indexed > 0 ||
+      indexStats.pending > 0 ||
+      indexStats.processing > 0 ||
+      indexStats.failed > 0;
+
+    if (hasRegistryData) {
+      return indexStats;
+    }
+
+    const totalFiles = stats.total;
+    const indexed = stats.done;
+    const pending = stats.pending + stats.retrying;
+    const processing = stats.processing;
+    const failed = stats.failed;
+    const progress = totalFiles > 0 ? Math.round((indexed / totalFiles) * 100) : 0;
+
+    return {
+      total_files: totalFiles,
+      indexed,
+      pending,
+      processing,
+      failed,
+      progress,
+    };
+  }, [indexStats, stats]);
+
+  const completionPct = effectiveStats.progress;
 
   // ── Data sync ──────────────────────────────────────────────────────────────
   const sync = useCallback(async () => {
@@ -534,7 +573,8 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     try {
       const data = await getCurrentProcessing(user.uid);
       setCurrentProcessingData(data);
-    } catch (e) {ata({
+    } catch (e) {
+      setCurrentProcessingData({
         current_file: null,
         queue_size: 0,
         total_processed: 0,
@@ -544,8 +584,25 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     }
   }, [user?.uid]);
 
+  const loadIndexStats = useCallback(async () => {
+    if (!user?.uid) return;
+    try {
+      const data = await getIndexStats();
+      setIndexStats(data);
+    } catch {
+      setIndexStats({
+        total_files: 0,
+        indexed: 0,
+        pending: 0,
+        processing: 0,
+        failed: 0,
+        progress: 0,
+      });
+    }
+  }, [user?.uid]);
+
   useEffect(() => {
-    sync(); checkEngine(); loadFileTypeStats(); loadCurrentProcessing();
+    sync(); checkEngine(); loadFileTypeStats(); loadCurrentProcessing(); loadIndexStats();
     const onP = (p?: any) => {
       if (p?.file?.name) {
         if (["uploading", "processing", "retrying"].includes(p.status)) {
@@ -558,26 +615,43 @@ export function ProcessingScreen(props: { onDone: () => void }) {
           }
         }
       }
-      sync(); loadFileTypeStats(); loadCurrentProcessing();
+      sync(); loadFileTypeStats(); loadCurrentProcessing(); loadIndexStats();
+    };
+    const onRegistryStats = (s?: any) => {
+      if (!s) return;
+      const total = Number(s.total_files || 0);
+      const indexed = Number(s.indexed || 0);
+      const progress = total > 0 ? Math.round((indexed / total) * 100) : 0;
+      setIndexStats({
+        total_files: total,
+        indexed,
+        pending: Number(s.pending || 0),
+        processing: Number(s.processing || 0),
+        failed: Number(s.failed || 0),
+        progress,
+      });
     };
     persistentQueue.on("progress", onP);
+    persistentQueue.on("registry-stats", onRegistryStats);
     persistentQueue.on("cleared",  sync);
     const t1 = setInterval(checkEngine,           8_000);
     const t2 = setInterval(loadFileTypeStats,     5_000);
     const t3 = setInterval(loadCurrentProcessing, 2_000);
+    const t4 = setInterval(loadIndexStats, 3_000);
     return () => {
       persistentQueue.off("progress", onP);
+      persistentQueue.off("registry-stats", onRegistryStats);
       persistentQueue.off("cleared",  sync);
-      clearInterval(t1); clearInterval(t2); clearInterval(t3);
+      clearInterval(t1); clearInterval(t2); clearInterval(t3); clearInterval(t4);
     };
-  }, [sync, checkEngine, loadFileTypeStats, loadCurrentProcessing]);
+  }, [sync, checkEngine, loadFileTypeStats, loadCurrentProcessing, loadIndexStats]);
 
   useEffect(() => {
-    if (!hasAutoStarted.current && stats.total === 0 && !isScanning) {
+    if (!hasAutoStarted.current && indexStats.total_files === 0 && !isScanning) {
       hasAutoStarted.current = true;
       void scanNow();
     }
-  }, [stats.total]);
+  }, [indexStats.total_files, isScanning]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const scanNow = async () => {
@@ -585,10 +659,10 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     setIsScanning(true); setLocalScanProgress(null);
     try {
       const files = await scanDeviceFiles({
-        includeImages: true, includeAudio: true, includeDocuments: true,
+        includeImages: true, includeAudio: false, includeDocuments: true,
         onProgress: p => setLocalScanProgress(p),
       });
-      if (files.length > 0) persistentQueue.enqueue(files);
+      if (files.length > 0) await persistentQueue.enqueue(files);
     } catch (e) {}
     finally { setIsScanning(false); setLocalScanProgress(null); }
   };
@@ -596,13 +670,13 @@ export function ProcessingScreen(props: { onDone: () => void }) {
   const manualPick = async () => {
     try {
       const docs = await pickDocuments();
-      if (docs.length > 0) persistentQueue.enqueue(docs);
+      if (docs.length > 0) await persistentQueue.enqueue(docs);
     } catch (e) {}
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([sync(), checkEngine(), loadFileTypeStats(), loadCurrentProcessing()]);
+    await Promise.all([sync(), checkEngine(), loadFileTypeStats(), loadCurrentProcessing(), loadIndexStats()]);
     setRefreshing(false);
   };
 
@@ -621,7 +695,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
         <View style={s.header}>
           <View style={s.headerLeft}>
             <Text style={s.title}>Processing Files</Text>
-            <Text style={s.subtitle}>{stats.done} of {stats.total} indexed</Text>
+            <Text style={s.subtitle}>{effectiveStats.indexed} of {effectiveStats.total_files} indexed</Text>
           </View>
           <EngineBadge status={engineStatus} />
         </View>
@@ -639,7 +713,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
                 <View>
                   <Text style={s.cardTitle}>Indexing Progress</Text>
                   <Text style={s.cardSub}>
-                    {stats.processing} Processing · {stats.pending} queued · {stats.failed} failed
+                    {effectiveStats.processing} Processing · {effectiveStats.pending} queued · {effectiveStats.failed} failed
                   </Text>
                 </View>
                 <Text style={s.bigPct}>{completionPct}%</Text>
@@ -648,11 +722,11 @@ export function ProcessingScreen(props: { onDone: () => void }) {
               <ProgressBar pct={completionPct} />
 
               <View style={s.statRow}>
-                <StatChip value={stats.processing} label="Processing"     color={T.accent}   />
-                <StatChip value={stats.pending}    label="Queued"     color={T.text2}    />
-                <StatChip value={stats.done}       label="Done"       color={T.success}  />
-                <StatChip value={stats.failed}     label="Failed"
-                  color={stats.failed > 0 ? T.danger : T.text3}
+                <StatChip value={effectiveStats.processing} label="Processing" color={T.accent} />
+                <StatChip value={effectiveStats.pending} label="Queued" color={T.text2} />
+                <StatChip value={effectiveStats.indexed} label="Done" color={T.success} />
+                <StatChip value={effectiveStats.failed} label="Failed"
+                  color={effectiveStats.failed > 0 ? T.danger : T.text3}
                 />
               </View>
             </View>
@@ -748,9 +822,9 @@ export function ProcessingScreen(props: { onDone: () => void }) {
 
             {/* ── Launch button ────────────────────────────────────────── */}
             <TouchableOpacity
-              style={[s.launchBtn, stats.done === 0 && s.launchBtnOff]}
+              style={[s.launchBtn, effectiveStats.indexed === 0 && s.launchBtnOff]}
               onPress={props.onDone}
-              disabled={stats.done === 0}
+              disabled={effectiveStats.indexed === 0}
               activeOpacity={0.85}
             >
               <View style={s.launchInner}>

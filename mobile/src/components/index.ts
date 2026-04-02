@@ -19,9 +19,7 @@ export {
 
 // Feature components
 export { AnimatedLogo } from "./AnimatedLogo";
-export { MessageBubble } from "./MessageBubble";
 export { ChatImageGrid } from "./ChatImageGrid";
 export { ChatHistorySideDrawer } from "./ChatHistorySideDrawer";
-export { RealTimeImageProcessor } from "./RealTimeImageProcessor";
 export { FailedFilesManager } from "./FailedFilesManager";
 export { SuggestedQueries } from "./SuggestedQueries";

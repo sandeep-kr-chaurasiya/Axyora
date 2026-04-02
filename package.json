@@ -1,0 +1,13 @@
+{
+  "name": "axyora",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "ios": "cd mobile && npm run ios",
+    "android": "cd mobile && npm run android",
+    "web": "cd mobile && npm run web",
+    "start": "cd mobile && npm start",
+    "build": "cd mobile && npm run build",
+    "test": "cd mobile && npm test"
+  }
+}

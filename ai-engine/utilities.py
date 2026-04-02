@@ -63,7 +63,10 @@ class CircuitBreaker:
                 self.success_count = 0
             else:
                 if fallback:
-                    return fallback(*args, **kwargs)
+                    try:
+                        return fallback(*args, **kwargs)
+                    except Exception:
+                        pass
                 raise RuntimeError(f"Circuit breaker OPEN: {self.service_name} unavailable")
         
         try:
@@ -78,8 +81,10 @@ class CircuitBreaker:
                 self.last_failure_time = time.time()
             
             if fallback:
-                return fallback(*args, **kwargs)
-            
+                try:
+                    return fallback(*args, **kwargs)
+                except Exception:
+                    pass
             raise
     
     def _record_success(self):
@@ -140,11 +145,16 @@ class RetryPolicy:
         self.exponential_base = exponential_base
     
     def calculate_delay_ms(self, attempt: int) -> int:
-        """Calculate delay in milliseconds for given attempt (0-indexed)"""
+        """Calculate delay in milliseconds for given attempt (0-indexed) with jitter"""
+        import random
+
         if attempt >= self.max_retries:
             return self.max_delay_ms
-        
-        delay_ms = int(self.initial_delay_ms * (self.exponential_base ** attempt))
+
+        base_delay = int(self.initial_delay_ms * (self.exponential_base ** attempt))
+        jitter = random.randint(0, int(base_delay * 0.2))
+        delay_ms = base_delay + jitter
+
         return min(delay_ms, self.max_delay_ms)
     
     def should_retry(self, error: Exception) -> bool:
@@ -168,7 +178,7 @@ class RetryPolicy:
             return True
         
         error_str = str(error).lower()
-        non_retriable_keywords = ["too large", "unsupported", "not found"]
+        non_retriable_keywords = ["too large", "unsupported", "not found", "invalid", "unauthorized", "forbidden"]
         for keyword in non_retriable_keywords:
             if keyword in error_str:
                 return False
@@ -198,13 +208,45 @@ class RetryPolicy:
                 
                 delay_ms = self.calculate_delay_ms(attempt)
                 delay_s = delay_ms / 1000.0
-                
+
+                # Lightweight debug log
+                print(f"[RetryPolicy] Attempt {attempt+1} failed. Retrying in {delay_s:.2f}s...")
+
                 time.sleep(delay_s)
         
         if last_error:
             raise last_error
         raise RuntimeError("Retry exhausted with unknown error")
 
+
+# ============================================================================
+# TIMEOUT UTILITY
+# ============================================================================
+
+def run_with_timeout(func: Callable[..., T], timeout_sec: float, *args, **kwargs) -> T:
+    """Run a blocking function with timeout protection"""
+    import threading
+
+    result = {"value": None, "error": None}
+
+    def target():
+        try:
+            result["value"] = func(*args, **kwargs)
+        except Exception as e:
+            result["error"] = e
+
+    thread = threading.Thread(target=target)
+    thread.daemon = True
+    thread.start()
+    thread.join(timeout_sec)
+
+    if thread.is_alive():
+        raise TimeoutError("Function execution timed out")
+
+    if result["error"]:
+        raise result["error"]
+
+    return result["value"]
 
 # ============================================================================
 # Global instances
@@ -250,7 +292,10 @@ def async_retry_wrapper(max_retries: int = MAX_RETRIES):
                     
                     delay_ms = retry.calculate_delay_ms(attempt)
                     delay_s = delay_ms / 1000.0
-                    
+
+                    # Lightweight debug log
+                    print(f"[AsyncRetry] Attempt {attempt+1} failed. Retrying in {delay_s:.2f}s...")
+
                     import asyncio
                     await asyncio.sleep(delay_s)
             

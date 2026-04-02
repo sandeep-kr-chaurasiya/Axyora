@@ -72,8 +72,7 @@ function DateDivider({ label }: { label: string }) {
 }
 
 /**
- * Inline Bubble — replaces the external <MessageBubble> to fix the
- * green user-bubble issue caused by the app theme's accent color leaking in.
+ * Inline bubble with explicit styles to prevent theme color leakage.
  */
 function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
   const isUser = role === "user";
@@ -113,6 +112,7 @@ export function ChatScreen() {
   const { messages, isLoading, send, clearHistory, loadChat, startNewChat } = useChat();
   const { logout } = useAuth();
   const [input, setInput]                   = useState("");
+  const [searchType, setSearchType]         = useState<"all" | "image" | "document">("all");
   const [showSettings, setShowSettings]     = useState(false);
   const [showProcessing, setShowProcessing] = useState(false);
   const [showDrawer, setShowDrawer]         = useState(false);
@@ -131,8 +131,8 @@ export function ChatScreen() {
     const v = input.trim();
     if (!v) return;
     setInput("");
-    await send(v);
-  }, [input, send]);
+    await send(v, "llama-3.3-70b-versatile", searchType);
+  }, [input, searchType, send]);
 
   const handleLogout = async () => {
     try {
@@ -299,6 +299,27 @@ export function ChatScreen() {
             { bottom: dockBottom },
           ]}
         >
+          <View style={s.searchTypeRow}>
+            <Pressable
+              style={[s.searchTypeChip, searchType === "all" && s.searchTypeChipActive]}
+              onPress={() => setSearchType("all")}
+            >
+              <Text style={[s.searchTypeText, searchType === "all" && s.searchTypeTextActive]}>All</Text>
+            </Pressable>
+            <Pressable
+              style={[s.searchTypeChip, searchType === "image" && s.searchTypeChipActive]}
+              onPress={() => setSearchType("image")}
+            >
+              <Text style={[s.searchTypeText, searchType === "image" && s.searchTypeTextActive]}>Images</Text>
+            </Pressable>
+            <Pressable
+              style={[s.searchTypeChip, searchType === "document" && s.searchTypeChipActive]}
+              onPress={() => setSearchType("document")}
+            >
+              <Text style={[s.searchTypeText, searchType === "document" && s.searchTypeTextActive]}>Documents</Text>
+            </Pressable>
+          </View>
+
           <View style={s.inputRow}>
             {/* Attach button */}
             <Pressable style={s.attachBtn}>
@@ -518,6 +539,35 @@ const s = StyleSheet.create({
   },
   latencyDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: ACCENT },
   latencyText: { fontSize: 9, color: colors.primaryLight, fontFamily: MONO },
+
+  // ── search mode chips
+  searchTypeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  searchTypeChip: {
+    borderWidth: 0.5,
+    borderColor: BORDER,
+    borderRadius: 999,
+    backgroundColor: BG_GLASS,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  searchTypeChipActive: {
+    backgroundColor: ACCENT_DIM,
+    borderColor: "rgba(108,106,246,0.35)",
+  },
+  searchTypeText: {
+    fontSize: 11,
+    color: TEXT_2,
+    fontFamily: MONO,
+  },
+  searchTypeTextActive: {
+    color: colors.primaryLight,
+  },
 
   // ── empty state
   empty: { alignItems: "center", paddingTop: 60, paddingHorizontal: 32 },

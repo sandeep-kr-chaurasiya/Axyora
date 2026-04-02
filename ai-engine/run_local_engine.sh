@@ -3,7 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="/Users/sandeepkumar/Desktop/Axyora"
 ENGINE_DIR="$ROOT_DIR/ai-engine"
-VENV="$ROOT_DIR/.venv/bin/activate"
+if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
+  VENV="$ROOT_DIR/.venv/bin/activate"
+elif [[ -f "$ENGINE_DIR/venv/bin/activate" ]]; then
+  VENV="$ENGINE_DIR/venv/bin/activate"
+else
+  echo "No Python virtual environment found. Expected one of:"
+  echo "  $ROOT_DIR/.venv/bin/activate"
+  echo "  $ENGINE_DIR/venv/bin/activate"
+  exit 1
+fi
 LOG_DIR="$ENGINE_DIR/logs"
 PID_FILE="$ENGINE_DIR/engine.pid"
 LOG_FILE="$LOG_DIR/engine.log"
@@ -29,7 +38,7 @@ nohup bash -lc '
       continue
     fi
     echo "[$(date "+%Y-%m-%d %H:%M:%S")] starting uvicorn" >> "'$LOG_FILE'"
-    uvicorn main:app --host 0.0.0.0 --port 8000 >> "'$LOG_FILE'" 2>&1 || true
+    python -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "'$LOG_FILE'" 2>&1 || true
     echo "[$(date "+%Y-%m-%d %H:%M:%S")] uvicorn exited, restarting in 2s" >> "'$LOG_FILE'"
     sleep 2
   done

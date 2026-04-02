@@ -124,7 +124,11 @@ setCurrentChatId(`chat-${Date.now()}`);
     }
   }, [messages, historyLoaded, currentChatId]);
 
-  const send = async (input: string, model = "llama-3.3-70b-versatile") => {
+  const send = async (
+    input: string,
+    model = "llama-3.3-70b-versatile",
+    fileType: "all" | "image" | "document" = "all"
+  ) => {
     const userMessage: ChatMessage = {
       id: `${Date.now()}-u`,
       role: "user",
@@ -138,7 +142,7 @@ setCurrentChatId(`chat-${Date.now()}`);
 
     try {
       
-      const response = await queryMemory({ query: input, model, topK: 5 });
+      const response = await queryMemory({ query: input, model, topK: 5, fileType });
       
       if (response.images && response.images.length > 0) {
 response.images.forEach((img, idx) => {

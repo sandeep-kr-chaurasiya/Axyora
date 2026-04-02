@@ -58,8 +58,7 @@ async function getFileSizeAsync(uri: string): Promise<number> {
       }
     }
   } catch (e) {
-    console.debug(`[Scanner] Could not get file size via getInfoAsync for ${uri}`, e);
-  }
+}
   
   // Fallback: return 0 and let backend handle it
   // This prevents blocking on deprecated API calls
@@ -262,8 +261,7 @@ async function scanMediaAssets(
             size = fileInfo.size;
           }
         } catch (e) {
-          console.warn(`[Scanner] Could not get file size for ${asset.filename}:`, e);
-        }
+}
         return {
           id: asset.id,
           uri: resolvedUri,
@@ -408,11 +406,9 @@ export async function scanAppDocumentDirectory(
           allPaths.push(p);
         }
       }
-      console.log(`[Scanner] Scanned ${root}: found ${walked.length} files`);
-    } catch (err) {
+} catch (err) {
       // Ignore inaccessible roots and continue scanning available locations.
-      console.warn(`[Scanner] Could not scan ${root}:`, err);
-    }
+}
   }
 
   // Include SAF directory if available
@@ -420,8 +416,7 @@ export async function scanAppDocumentDirectory(
     const safRoot = await getStoredAndroidDirectoryUri();
     if (safRoot) {
       try {
-        console.log(`[Scanner] Scanning SAF directory: ${safRoot}`);
-        const remaining = maxFiles - allPaths.length;
+const remaining = maxFiles - allPaths.length;
         const safFiles = await walkSafDirectory(safRoot, remaining, []);
         for (const p of safFiles) {
           if (!seen.has(p)) {
@@ -429,14 +424,11 @@ export async function scanAppDocumentDirectory(
             allPaths.push(p);
           }
         }
-        console.log(`[Scanner] SAF scan found ${safFiles.length} files`);
-      } catch (err) {
+} catch (err) {
         // Ignore SAF traversal errors and keep other scan results.
-        console.warn(`[Scanner] SAF traversal failed:`, err);
-      }
+}
     } else {
-      console.log(`[Scanner] No SAF directory stored; skipping SAF scan`);
-    }
+}
   }
 
   const files: ScannableFile[] = [];
@@ -487,13 +479,10 @@ export async function scanAppDocumentDirectory(
         fingerprint: buildFingerprint(path, size, modifiedAt),
       });
     } catch (err) {
-      console.warn(`[Scanner] Could not read file info for ${path}:`, err);
-      continue;
+continue;
     }
   }
-
-  console.log(`[Scanner] Total files found in document scan: ${files.length}`);
-  return files;
+return files;
 }
 
 export async function scanDeviceFiles(options?: {

@@ -78,12 +78,9 @@ export async function requestOnInstallPermissions(): Promise<PermissionState> {
     // Store permission state
     await AsyncStorage.setItem(PERMISSIONS_STORAGE_KEY, JSON.stringify(state));
     await AsyncStorage.setItem(PERMISSIONS_PROMPT_KEY, String(Date.now()));
-
-    console.log("[Permissions] Granted:", state);
-    return state;
+return state;
   } catch (error) {
-    console.warn("[Permissions] Failed to initialize permission state", error);
-    return state;
+return state;
   }
 }
 
@@ -120,11 +117,9 @@ export function useAppLifecycle(): {
       appStateRef.current.match(/inactive|background/) &&
       state === "active"
     ) {
-      console.log("[AppLifecycle] App resumed → resuming queue");
-      persistentQueue.resume();
+persistentQueue.resume();
     } else if (state.match(/inactive|background/)) {
-      console.log("[AppLifecycle] App paused → pausing queue");
-      persistentQueue.pause();
+persistentQueue.pause();
     }
 
     appStateRef.current = state;

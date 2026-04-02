@@ -526,19 +526,15 @@ export function ProcessingScreen(props: { onDone: () => void }) {
   const loadFileTypeStats = useCallback(async () => {
     if (!user?.uid) return;
     try { setFileTypeStats(await getFileTypeStats(user.uid)); }
-    catch (e) { console.warn("[Processing] file type stats failed", e); }
+    catch (e) {}
   }, [user?.uid]);
 
   const loadCurrentProcessing = useCallback(async () => {
     if (!user?.uid) return;
     try {
       const data = await getCurrentProcessing(user.uid);
-      console.log("[Processing] Current processing data:", data);
       setCurrentProcessingData(data);
-    } catch (e) { 
-      console.warn("[Processing] current processing failed", e); 
-      // Set empty state on error
-      setCurrentProcessingData({
+    } catch (e) {ata({
         current_file: null,
         queue_size: 0,
         total_processed: 0,
@@ -593,7 +589,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
         onProgress: p => setLocalScanProgress(p),
       });
       if (files.length > 0) persistentQueue.enqueue(files);
-    } catch (e) { console.error("Scan Error", e); }
+    } catch (e) {}
     finally { setIsScanning(false); setLocalScanProgress(null); }
   };
 
@@ -601,7 +597,7 @@ export function ProcessingScreen(props: { onDone: () => void }) {
     try {
       const docs = await pickDocuments();
       if (docs.length > 0) persistentQueue.enqueue(docs);
-    } catch (e) { console.error("Picker error", e); }
+    } catch (e) {}
   };
 
   const onRefresh = async () => {

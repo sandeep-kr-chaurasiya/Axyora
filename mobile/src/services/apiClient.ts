@@ -216,20 +216,16 @@ async function authedFetch(
   const headers = await authHeaders(init?.headers);
   const candidates = getCandidateBaseUrls();
   const prioritized = [API_BASE_URL, ...candidates.filter((url) => url !== API_BASE_URL)];
-  console.log(`[API] Attempting ${path} on candidates:`, prioritized);
-  let lastNetworkErr: NetworkError | null = null;
+let lastNetworkErr: NetworkError | null = null;
 
   for (const baseUrl of prioritized) {
     const url = `${baseUrl}${path}`;
     try {
-      console.log(`[API] Trying ${url}...`);
-      const res = await fetchWithTimeout(url, { ...init, headers }, timeoutMs);
-      console.log(`[API] Success on ${baseUrl}, status=${res.status}`);
-      API_BASE_URL = baseUrl;
+const res = await fetchWithTimeout(url, { ...init, headers }, timeoutMs);
+API_BASE_URL = baseUrl;
       return res;
     } catch (error) {
-      console.warn(`[API] Failed on ${baseUrl}:`, error instanceof Error ? error.message : error);
-      const networkErr = classifyNetworkError(error);
+const networkErr = classifyNetworkError(error);
       lastNetworkErr = networkErr;
 
       if (!networkErr.retriable) {
@@ -239,8 +235,7 @@ async function authedFetch(
   }
 
   const tried = prioritized.join(", ");
-  console.error(`[API] Could not reach backend after trying: ${tried}`);
-  throw new NetworkError(
+throw new NetworkError(
     lastNetworkErr?.code || "NETWORK_ERROR",
     true,
     `Cannot reach AI engine. Tried: ${tried}\n\n` +
@@ -314,7 +309,6 @@ async function makeRequest<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await method();
-      console.log(`[API:makeRequest] Response status: ${res.status} (attempt ${attempt + 1}/${maxRetries + 1})`);
 
       if (!res.ok) {
         const errorText = await res.text();
@@ -368,12 +362,10 @@ export async function submitFileForProcessing(params: {
 }): Promise<ProcessingJob> {
   const userId = requireUserId();
   const resolvedJobId = params.jobId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log(`[API:submitFile] Preparing file: ${params.fileName} (jobId: ${resolvedJobId}, mimeType: ${params.mimeType})`);
 
   try {
     // Read file data as base64 from the URI
-    console.log(`[API:submitFile] Reading file from: ${params.fileUri}`);
-    const base64Data = await readAsStringAsync(params.fileUri, {
+const base64Data = await readAsStringAsync(params.fileUri, {
       encoding: "base64" as any,
     });
 
@@ -385,7 +377,6 @@ export async function submitFileForProcessing(params: {
       type: params.mimeType,
     } as any;
 
-    console.log(`[API:submitFile] File size: ${base64Data.length} bytes (base64)`);
     form.append("file", fileBlob);
     form.append("user_id", userId);
     form.append("job_id", resolvedJobId);
@@ -394,21 +385,16 @@ export async function submitFileForProcessing(params: {
     if (typeof params.modifiedAt === "number") {
       form.append("modified_at", String(params.modifiedAt));
     }
-
-    console.log(`[API:submitFile] Uploading to /process-file endpoint...`);
-    const data = await makeRequest<AiJobStatusResponse>(
+const data = await makeRequest<AiJobStatusResponse>(
       () => authedFetch("/process-file", { method: "POST", body: form }, UPLOAD_TIMEOUT),
       1 // Only 1 retry for uploads
     );
-    console.log(`[API:submitFile] File submission successful, got jobId: ${data.job_id}`);
-
-    return {
+return {
       jobId: data.job_id,
       status: data.status,
     };
   } catch (error) {
-    console.error(`[API:submitFile] Upload failed:`, error);
-    throw error;
+throw error;
   }
 }
 
@@ -454,11 +440,6 @@ export async function queryMemory(payload: {
   const userId = requireUserId();
   const modelToUse = payload.model || "llama3:8b";
 
-  console.log(`[API] Query request: "${payload.query}"`);
-  console.log(`[API] User ID: ${userId}`);
-  console.log(`[API] Model: ${modelToUse}`);
-  console.log(`[API] Top K: ${payload.topK ?? 5}`);
-
   const response = await makeRequest<QueryResponse>(
     () =>
       authedFetch(
@@ -477,19 +458,9 @@ export async function queryMemory(payload: {
       ),
     2
   );
-
-  console.log(`[API] Query response received`);
-  console.log(`[API] Answer length: ${response.answer?.length || 0} chars`);
-  console.log(`[API] Number of sources: ${response.sources?.length || 0}`);
-  console.log(`[API] Number of images: ${response.images?.length || 0}`);
   
   if (response.images && response.images.length > 0) {
-    console.log(`[API] Images in response:`);
-    response.images.forEach((img, idx) => {
-      console.log(`  [${idx}] file_name: ${img.file_name}`);
-      console.log(`  [${idx}] file_path: ${img.file_path}`);
-      console.log(`  [${idx}] image_uri: ${img.image_uri}`);
-      console.log(`  [${idx}] score: ${img.score}`);
+response.images.forEach((img, idx) => {
     });
   }
 

@@ -51,8 +51,7 @@ export function DiscoveryScreen(props: {
         );
         setCounts(finalCounts);
       } catch (error) {
-        console.warn("[Discovery] Scan failed", error);
-      } finally {
+} finally {
         if (alive) setScanning(false);
       }
     };

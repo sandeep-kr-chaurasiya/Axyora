@@ -57,8 +57,7 @@ export function SettingsScreen(props: {
         if (typeof data?.encryptionEnabled === "boolean") setEncryptionEnabled(data.encryptionEnabled);
         if (typeof data?.biometricLock === "boolean") setBiometricLock(data.biometricLock);
       } catch (e) {
-        console.warn("Failed to load settings", e);
-      } finally {
+} finally {
         setSettingsLoading(false);
       }
     };
@@ -128,8 +127,7 @@ export function SettingsScreen(props: {
     try {
       await updateSettings({ [key]: value });
     } catch (e) {
-      console.warn("Failed to update setting", key, e);
-      rollback();
+rollback();
     }
   };
 

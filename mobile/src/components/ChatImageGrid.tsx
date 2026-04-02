@@ -101,8 +101,6 @@ export function ChatImageGrid(props: ChatImageGridProps) {
               });
             }}
             onError={() => {
-              console.warn(`[ChatImageGrid] Failed to load: ${item.file_name}`);
-              // Mark as failed to exclude from grid
               setFailedImageNames(prev => new Set(prev).add(item.file_name));
             }}
           />
@@ -163,7 +161,6 @@ export function ChatImageGrid(props: ChatImageGridProps) {
                       message: expandedImage.file_name || uri,
                     });
                   } catch (err) {
-                    console.warn("[ChatImageGrid] Share failed", err);
                   }
                 }}
               >
@@ -213,8 +210,7 @@ export function ChatImageGrid(props: ChatImageGridProps) {
                         source={{ uri }}
                         style={[styles.expandedImage, { width, height: height * 0.78 }]}
                         resizeMode="contain"
-                        onError={() =>
-                          console.warn(`[Image] Failed to load expanded: ${item.file_name}`)
+                        onError={() => {}
                         }
                       />
                     )}

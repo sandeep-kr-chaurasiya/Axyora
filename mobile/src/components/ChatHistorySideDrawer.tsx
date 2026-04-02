@@ -76,8 +76,7 @@ export function ChatHistorySideDrawer(props: {
         setChats(chatList);
       }
     } catch (error) {
-      console.error("Failed to load chats:", error);
-    }
+}
   };
 
   const deleteChat = async (chatId: string) => {
@@ -95,8 +94,7 @@ export function ChatHistorySideDrawer(props: {
         loadChats();
       }
     } catch (error) {
-      console.error("Failed to delete chat:", error);
-    }
+}
   };
 
   const formatDate = (timestamp: number) => {

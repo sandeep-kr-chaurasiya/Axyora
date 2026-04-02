@@ -57,5 +57,3 @@ JOB_RETENTION_SECONDS = 3600  # 1 hour
 # Database
 DB_PATH = "axyora_jobs.db"
 DB_TIMEOUT = 30
-
-print(f"[Config] Production settings loaded. Default model: {GROQ_MODEL}")

@@ -21,4 +21,15 @@ else
   echo "Process not running; cleaning stale PID file."
 fi
 
+# Also kill any orphan uvicorn/python process still holding port 8000.
+PORT_PIDS="$(lsof -ti :8000 2>/dev/null || true)"
+if [[ -n "$PORT_PIDS" ]]; then
+  echo "$PORT_PIDS" | xargs kill 2>/dev/null || true
+  sleep 1
+  PORT_PIDS="$(lsof -ti :8000 2>/dev/null || true)"
+  if [[ -n "$PORT_PIDS" ]]; then
+    echo "$PORT_PIDS" | xargs kill -9 2>/dev/null || true
+  fi
+fi
+
 rm -f "$PID_FILE"

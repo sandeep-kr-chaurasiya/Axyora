@@ -85,8 +85,7 @@ export function useChat() {
           await AsyncStorage.setItem(CURRENT_CHAT_ID_KEY, chatId);
         }
       } catch (error) {
-        console.error("[Chat] Failed to load history:", error);
-        setCurrentChatId(`chat-${Date.now()}`);
+setCurrentChatId(`chat-${Date.now()}`);
       } finally {
         setHistoryLoaded(true);
       }
@@ -118,8 +117,7 @@ export function useChat() {
             JSON.stringify(updated)
           );
         } catch (error) {
-          console.error("[Chat] Failed to save history:", error);
-        }
+}
       };
       
       saveLater();
@@ -139,23 +137,12 @@ export function useChat() {
     setIsLoading(true);
 
     try {
-      console.log(`[Chat] Sending query: "${input}"`);
-      console.log(`[Chat] Using model: ${model}`);
       
       const response = await queryMemory({ query: input, model, topK: 5 });
       
-      console.log(`[Chat] Response received from API`);
-      console.log(`[Chat] Response answer: ${response.answer?.substring(0, 100) || "N/A"}`);
-      console.log(`[Chat] Response images count: ${response.images?.length || 0}`);
-      console.log(`[Chat] Response sources count: ${response.sources?.length || 0}`);
-      
       if (response.images && response.images.length > 0) {
-        console.log(`[Chat] Images received:`);
-        response.images.forEach((img, idx) => {
-          console.log(`  Image ${idx}: ${img.file_name}`);
-          console.log(`    Path: ${img.file_path}`);
-          console.log(`    URI: ${img.image_uri}`);
-        });
+response.images.forEach((img, idx) => {
+});
       }
       
       // Generate friendly assistant response with context
@@ -167,8 +154,7 @@ export function useChat() {
       const displayImageCount = countDisplayImages(response.images);
       if (displayImageCount > 0 && !response.sources?.length) {
         // Only images found - use friendly conversational response
-        console.log(`[Chat] Images found without sources`);
-        answerText = GREETING_RESPONSES.imageSearch(displayImageCount);
+answerText = GREETING_RESPONSES.imageSearch(displayImageCount);
       } else if (displayImageCount > 0 && response.sources?.length) {
         // Both found - use original answer with greeting prefix
         const greeting = CASUAL_GREETINGS[Math.floor(Math.random() * CASUAL_GREETINGS.length)];
@@ -186,11 +172,9 @@ export function useChat() {
         fallback: response.fallback,
         chatId: currentChatId,
       };
-      console.log(`[Chat] Adding assistant message with ${response.images?.length || 0} images`);
-      setMessages((prev) => [assistantMessage, ...prev]);
+setMessages((prev) => [assistantMessage, ...prev]);
     } catch (error) {
-      console.error(`[Chat] Error during query:`, error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+const errorMessage = error instanceof Error ? error.message : "Unknown error";
       const assistantMessage: ChatMessage = {
         id: `${Date.now()}-e`,
         role: "assistant",
@@ -213,8 +197,7 @@ export function useChat() {
       setCurrentChatId(newChatId);
       await AsyncStorage.setItem(CURRENT_CHAT_ID_KEY, newChatId);
     } catch (error) {
-      console.error("[Chat] Failed to clear history:", error);
-    }
+}
   };
 
   const loadChat = async (chatId: string) => {
@@ -230,8 +213,7 @@ export function useChat() {
         await AsyncStorage.setItem(CURRENT_CHAT_ID_KEY, chatId);
       }
     } catch (error) {
-      console.error("[Chat] Failed to load chat:", error);
-    }
+}
   };
 
   const startNewChat = async () => {

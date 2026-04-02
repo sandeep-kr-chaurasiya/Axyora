@@ -72,11 +72,9 @@ class PersistentQueue extends EventEmitter {
         // Validate and filter out corrupted items
         const validItems = parsed.items.filter(item => {
           if (!item || !item.file) {
-            console.warn("[PersistentQueue] Filtering out item with missing file:", item?.id);
             return false;
           }
           if (!item.file.uri || !item.file.name) {
-            console.warn("[PersistentQueue] Filtering out item with incomplete file data:", item.id);
             return false;
           }
           return true;
@@ -105,7 +103,6 @@ class PersistentQueue extends EventEmitter {
         });
         
         if (corruptedCount > 0) {
-          console.warn(`[PersistentQueue] Removed ${corruptedCount} corrupted items from queue`);
         }
 
         if (this.state.items.length > 0 && !this.running && !this.isAppPaused) {
@@ -113,7 +110,6 @@ class PersistentQueue extends EventEmitter {
         }
       }
     } catch (error) {
-      console.error("[PersistentQueue] Failed to restore from storage", error);
       this.state.items = [];
       this.state.currentIndex = 0;
     }
@@ -143,17 +139,14 @@ class PersistentQueue extends EventEmitter {
 
   async start(): Promise<void> {
     if (this.running) {
-      console.debug("[Queue] Already running, skipping start");
       return;
     }
-    console.log(`[Queue] ▶️ Starting queue processing (${this.state.items.length} items, starting at index ${this.state.currentIndex})`);
     this.running = true;
     this.abortController = new AbortController();
 
     try {
       while (this.state.currentIndex < this.state.items.length && !this.abortController.signal.aborted) {
         if (this.isAppPaused) {
-          console.log(`[Queue] ⏸️ App paused, waiting to resume...`);
           await new Promise((resolve) => {
             const interval = setInterval(() => {
               if (!this.isAppPaused || this.abortController?.signal.aborted) {
@@ -168,13 +161,11 @@ class PersistentQueue extends EventEmitter {
         
         // Validate item exists and has required properties
         if (!item) {
-          console.error(`[Queue] Item at index ${this.state.currentIndex} is null/undefined, skipping`);
           this.state.currentIndex++;
           continue;
         }
         
         if (!item.file || !item.file.uri) {
-          console.error(`[Queue] Item ${item?.id || 'unknown'} has invalid file data, marking as error`);
           item.status = "error";
           item.error = {
             code: "INVALID_FILE_DATA",
@@ -189,7 +180,6 @@ class PersistentQueue extends EventEmitter {
           continue;
         }
         
-        console.log(`[Queue] Processing item ${this.state.currentIndex + 1}/${this.state.items.length}: ${item.file.name} (${item.file.size} bytes)`);
         
         try {
           // Add timeout to prevent infinite hanging on individual items
@@ -199,10 +189,6 @@ class PersistentQueue extends EventEmitter {
           );
           await Promise.race([this.processItem(item), itemTimeout]);
         } catch (itemError) {
-          console.error(
-            `[Queue] Item ${this.state.currentIndex + 1} failed:`,
-            itemError instanceof Error ? itemError.message : itemError
-          );
           // Mark as error and continue to next item instead of stopping entire queue
           const currentItem = this.state.items[this.state.currentIndex];
           if (currentItem && currentItem.status !== "error" && currentItem.status !== "done") {
@@ -227,11 +213,9 @@ class PersistentQueue extends EventEmitter {
       }
 
       this.running = false;
-      console.log(`[Queue] ⏹️ Queue processing complete (${this.state.currentIndex}/${this.state.items.length} processed)`);
       this.emit("idle");
       await this.checkpoint();
     } catch (error) {
-      console.error("[Queue] Critical error during processing", error instanceof Error ? error.message : error);
       this.running = false;
     }
   }
@@ -282,7 +266,6 @@ class PersistentQueue extends EventEmitter {
           item.file.uri = targetPath;
           item.file.location = targetPath;
           item.file.size = info.size;
-          console.log(`[Queue:ProcessItem] Normalized file to ${targetPath} (${info.size} bytes)`);
         } catch (err) {
           throw new Error(`Failed to normalize file for upload: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -290,7 +273,6 @@ class PersistentQueue extends EventEmitter {
 
       item.status = "uploading";
       item.attemptedAt = Date.now();
-      console.log(`[Queue:ProcessItem] Starting upload: ${item.file.name} (size: ${item.file.size} bytes, type: ${item.file.mimeType})`);
       this.emitProgress(item);
 
       const submitted = await submitFileForProcessing({
@@ -305,9 +287,6 @@ class PersistentQueue extends EventEmitter {
         throw new Error("No job ID returned from server");
       }
 
-      console.log(
-        `[Queue:ProcessItem] ✅ Upload successful - jobId: ${submitted.jobId}, initialStatus: ${submitted.status}`
-      );
       item.jobId = submitted.jobId;
       item.status = "processing";
       this.emitProgress(item);
@@ -329,13 +308,9 @@ class PersistentQueue extends EventEmitter {
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           
           if (!status || !status.status) {
-            console.warn(`[Queue:ProcessItem:Poll] Invalid status response:`, status);
             continue;
           }
 
-          console.log(
-            `[Queue:ProcessItem:Poll] Attempt ${pollAttempts} @ ${elapsed}s: status=${status.status}, progress=${status.progress || 0}%, step=${status.currentStep || 'N/A'}`
-          );
 
           item.progress = status.progress || 0;
           item.currentStep = status.currentStep || "Processing";
@@ -346,7 +321,6 @@ class PersistentQueue extends EventEmitter {
             item.status = "done";
             item.completedAt = Date.now();
             item.processingTime = item.completedAt - (item.attemptedAt ?? item.createdAt);
-            console.log(`[Queue:ProcessItem:Poll] ✅ Job completed in ${item.processingTime}ms`);
             isComplete = true;
           } else if (status.status === "error") {
             throw new Error(`Backend job error: ${status.error || "Unknown error"}`);
@@ -357,14 +331,9 @@ class PersistentQueue extends EventEmitter {
           
           // Check if job appears stuck (no progress updates)
           if (Date.now() - lastStatusUpdate > statusUpdateTimeoutMs && pollAttempts > 10) {
-            console.warn(`[Queue:ProcessItem:Poll] Job appears stuck, no progress in ${statusUpdateTimeoutMs}ms`);
             // Don't fail yet, give it more time, but log warning
           }
         } catch (pollError) {
-          console.error(
-            `[Queue:ProcessItem:Poll] Error on attempt ${pollAttempts}:`,
-            pollError instanceof Error ? pollError.message : pollError
-          );
           // Don't throw on poll error - just continue trying
           await new Promise((resolve) => setTimeout(resolve, 1000)); // Extra delay before retry
         }
@@ -390,9 +359,6 @@ class PersistentQueue extends EventEmitter {
         const basedelay = 2000 * Math.pow(2, retryCount);
         const jitter = Math.random() * 1000;
         const delay = Math.min(basedelay + jitter, maxRetryDelay);
-        console.log(
-          `[Queue:ProcessItem] ⚠️ Retriable error - retrying ${item.file.name} in ${delay}ms (attempt ${retryCount + 1}/${maxRetries}): ${errorMsg}`
-        );
         this.emitProgress(item);
 
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -408,9 +374,6 @@ class PersistentQueue extends EventEmitter {
           retryCount,
         };
         item.retryCount = retryCount;
-        console.error(
-          `[Queue:ProcessItem] ❌ Failed permanently: ${item.file.name} (${retryCount} retries) - ${errorMsg}`
-        );
         this.emitProgress(item);
       }
     }
@@ -494,7 +457,6 @@ class PersistentQueue extends EventEmitter {
       await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(this.state));
       this.state.lastCheckpoint = Date.now();
     } catch (error) {
-      console.error("[PersistentQueue] Failed to checkpoint", error);
     }
   }
 

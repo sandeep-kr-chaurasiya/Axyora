@@ -2,6 +2,14 @@
 Axyora AI Engine — FastAPI service
 The core intelligence hub for local memory processing.
 Migrated to Groq API Cloud Reasoning.
+
+This module uses consolidated, professional file organization:
+- storage.py: JobStore, LocalStorageBackend, VectorStore, IndexRegistry
+- processing.py: File extraction, chunking, embeddings, image captioning
+- rag.py: QueryEngine, ContextBuilder, GroqClient
+- utilities.py: CircuitBreaker, RetryPolicy
+- models.py: Pydantic request/response models
+- production_config.py: Configuration constants
 """
 
 from __future__ import annotations
@@ -22,12 +30,28 @@ except Exception:
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
 
-from processor import detect_file_type, process_file_bytes
-from metadata_db import JobStore
-from ingestion import IngestionEngine
-from local_storage import get_local_storage
+# ============================================================================
+# IMPORTS FROM CONSOLIDATED MODULES
+# ============================================================================
+
+# Data models
+from models import (
+    QueryRequest,
+    AskRequest,
+    ScanRequest,
+)
+
+# Storage layer
+from storage import JobStore, LocalStorageBackend, VectorStore, IndexRegistry, get_local_storage
+
+# Processing layer
+from processing import detect_file_type, process_file_bytes, get_embedding_engine as processing_get_embedding_engine
+
+# RAG layer
+from rag import QueryEngine
+
+# Configuration & logging
 from production_config import (
     MAX_FILE_SIZE_BYTES,
     SUPPORTED_FILE_TYPES,
@@ -38,36 +62,13 @@ from production_config import (
     FILE_PROCESSING_TIMEOUT,
     EMBEDDING_TIMEOUT,
 )
-from logging_config import logger
 
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
+# Ingestion
+from ingestion import IngestionEngine
 
-class QueryRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=1000)
-    user_id: str = Field(..., min_length=1, max_length=100)
-    top_k: int = Field(default=5, ge=1, le=20)
-    model: str = Field(default="llama-3.3-70b-versatile")
-    
-    @field_validator("query")
-    @classmethod
-    def query_not_empty(cls, v):
-        if not v.strip():
-            raise ValueError("Query cannot be empty")
-        return v.strip()
-
-class AskRequest(BaseModel):
-    query: str = Field(..., min_length=1)
-    context: List[str] = Field(..., min_length=1)
-
-class ScanRequest(BaseModel):
-    user_id: str = Field(..., min_length=1, max_length=100)
-    files: List[Dict] = Field(default_factory=list)
-
-# ---------------------------------------------------------------------------
-# Global singletons
-# ---------------------------------------------------------------------------
+# ============================================================================
+# GLOBAL SINGLETONS
+# ============================================================================
 
 _embedding_engine = None
 _vector_store = None
@@ -81,42 +82,41 @@ _job_queue: asyncio.Queue[dict] = None
 _workers: list[asyncio.Task] = []
 _embedding_semaphore: asyncio.Semaphore | None = None
 
+
 def get_embedding_engine():
+    """Get or create embedding engine singleton"""
     global _embedding_engine
     if _embedding_engine is None:
-        from embeddings import EmbeddingEngine
-        _embedding_engine = EmbeddingEngine()
+        _embedding_engine = processing_get_embedding_engine()
     return _embedding_engine
 
+
 def get_vector_store():
+    """Get or create vector store singleton"""
     global _vector_store
     if _vector_store is None:
-        from vector_store import VectorStore
         _vector_store = VectorStore()
     return _vector_store
 
+
 def get_query_engine():
+    """Get or create query engine singleton"""
     global _query_engine
     if _query_engine is None:
-        from query_engine import QueryEngine
         _query_engine = QueryEngine(get_embedding_engine(), get_vector_store())
     return _query_engine
 
+
 def get_index_registry():
+    """Get or create index registry singleton"""
     global _index_registry
     if _index_registry is None:
-        from index_registry import IndexRegistry
         _index_registry = IndexRegistry()
     return _index_registry
 
-def get_local_storage():
-    global _local_storage
-    if _local_storage is None:
-        from local_storage import get_local_storage as create_storage
-        _local_storage = create_storage()
-    return _local_storage
 
 def get_ingestion_engine():
+    """Get or create ingestion engine singleton"""
     global _ingestion_engine
     if _ingestion_engine is None:
         _ingestion_engine = IngestionEngine("~/Axyora_Library", "local_user", _queue_local_file)
@@ -141,7 +141,7 @@ def _queue_local_file(**kwargs):
         asyncio.run_coroutine_threadsafe(_job_queue.put(payload), asyncio.get_event_loop())
         job_store.create_job(job_id, kwargs["user_id"], kwargs["file_name"], kwargs["file_type"])
     except Exception as e:
-        logger.error(f"Failed to queue local file {kwargs['file_path']}", error=e)
+        pass
 
 def _update_job(job_id: str, **kwargs):
     if job_store:
@@ -156,36 +156,30 @@ async def _job_worker(worker_id: int):
     while True:
         try:
             if _job_queue is None:
-                logger.error(f"Worker {worker_id}: Queue not initialized, waiting...")
                 await asyncio.sleep(1)
                 continue
                 
             payload = await _job_queue.get()
         except asyncio.CancelledError:
-            logger.info(f"Worker {worker_id} cancelled")
             break
         except Exception as exc:
-            logger.error(f"Worker {worker_id} failed to get item from queue", error=exc)
             await asyncio.sleep(1)
             continue
             
         job_id = payload.get("job_id")
         if not job_id:
-            logger.error(f"Worker {worker_id}: Payload missing job_id", error=payload)
             _job_queue.task_done()
             continue
             
         try:
-            logger.job_started(job_id, payload["user_id"], payload["file_name"], payload["file_type"])
             await _run_pipeline(**payload)
         except Exception as exc:
-            logger.error(f"Worker {worker_id} job {job_id} failed", error=exc)
             _update_job(job_id, status="error", current_step="Pipeline Error", error=str(exc)[:500], completed_at=time.time())
         finally:
             try:
                 _job_queue.task_done()
             except Exception as exc:
-                logger.error(f"Worker {worker_id}: Error calling task_done()", error=exc)
+                pass
             gc.collect()
             if torch is not None and hasattr(torch, "backends") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
@@ -267,9 +261,7 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
                 break
 
         _update_job(job_id, status="done", progress=100, current_step="Complete", chunks_processed=len(chunks), completed_at=time.time())
-        logger.job_completed(job_id, user_id, file_name, len(chunks), time.time()-start_time)
     except Exception as e:
-        logger.job_failed(job_id, user_id, file_name, e, time.time()-start_time)
         raise e
 
 # ---------------------------------------------------------------------------
@@ -279,7 +271,6 @@ async def _run_pipeline(job_id, file_bytes, file_name, file_type, user_id, file_
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global job_store, _job_queue, _workers, _embedding_semaphore
-    logger.info("Axyora AI Engine starting...")
     
     job_store = JobStore()
     _job_queue = asyncio.Queue(maxsize=JOB_QUEUE_MAXSIZE)
@@ -308,23 +299,8 @@ async def request_context(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception as exc:
-        logger.error(
-            "Request failed",
-            error=exc,
-            request_id=request_id,
-            path=request.url.path,
-            method=request.method,
-        )
         raise
     duration_ms = int((time.time() - start) * 1000)
-    logger.info(
-        "Request completed",
-        request_id=request_id,
-        path=request.url.path,
-        method=request.method,
-        status=response.status_code,
-        duration_ms=duration_ms,
-    )
     response.headers["X-Request-Id"] = request_id
     return response
 
@@ -389,7 +365,6 @@ async def get_current_processing(user_id: str = Query(...)):
         total_failed = sum(1 for j in user_jobs if j.get("status") == "error")
         total_pending = sum(1 for j in user_jobs if j.get("status") == "pending")
     except Exception as e:
-        logger.error("Failed to compute job stats", error=e, user_id=user_id)
         total_done = 0
         total_failed = 0
         total_pending = 0
@@ -420,7 +395,7 @@ async def index_stats(user_id: str = Query(...)):
         processed_files = sum(1 for j in jobs if j.get("status") == "done")
         stats["processed_files"] = processed_files
     except Exception as e:
-        logger.error("Failed to compute processed_files", error=e, user_id=user_id)
+        pass
     return stats
 
 @app.post("/scan")
@@ -470,14 +445,13 @@ async def process_file(
 @app.post("/ask")
 async def ask_standalone(req: AskRequest):
     """Standalone Groq reasoning endpoint using provided context."""
-    from groq_client import GroqClient
+    from rag import GroqClient
     try:
         client = GroqClient()
         context_str = "\n---\n".join(req.context)
         answer = client.ask(req.query, context_str)
         return {"answer": answer}
     except Exception as e:
-        logger.error("Standalone ask failed", error=e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/query")
@@ -489,8 +463,6 @@ async def query(req: QueryRequest, request: Request):
     
     try:
         start = time.time()
-        logger.query_started(req.user_id, req.query)
-        logger.info(f"[Query] Groq request: {req.query[:40]}... (user={req.user_id[:20]})")
         
         # Limit top_k to reasonable range (3-20)
         effective_top_k = max(1, min(req.top_k, 20))
@@ -499,11 +471,8 @@ async def query(req: QueryRequest, request: Request):
             get_query_engine().answer, req.query, req.user_id, effective_top_k, req.model
         )
         duration_ms = int((time.time() - start) * 1000)
-        logger.query_completed(req.user_id, duration_ms, bool(result.get("fallback")))
         return {**result, "duration_ms": duration_ms}
     except Exception as e:
-        logger.query_failed(req.user_id, e)
-        logger.error("Query failed", error=e, request_id=getattr(request.state, "request_id", None))
         raise HTTPException(status_code=500, detail="Reasoning engine failed.")
 
 @app.post("/search-images")
@@ -515,7 +484,6 @@ async def search_images(req: QueryRequest):
     
     try:
         start = time.time()
-        logger.info(f"[ImageSearch] Request: {req.query[:40]}... (user={req.user_id[:20]})")
         
         # Limit top_k to reasonable range (3-20)
         effective_top_k = max(1, min(req.top_k, 20))
@@ -525,7 +493,6 @@ async def search_images(req: QueryRequest):
         )
         return {**result, "duration_ms": int((time.time() - start) * 1000)}
     except Exception as e:
-        logger.error("Image search failed", error=e)
         raise HTTPException(status_code=500, detail="Image search failed.")
 
 @app.get("/status/{job_id}")
@@ -590,7 +557,6 @@ async def discover_files(user_id: str):
             None, local_storage.store_discovered_files, files
         )
         
-        logger.info(f"[LocalStorage] Discovered {total} files for user {user_id[:20]}")
         return {
             "status": "success",
             "totalFiles": total,
@@ -598,7 +564,6 @@ async def discover_files(user_id: str):
             "previouslyProcessed": total - len(new_ids)
         }
     except Exception as e:
-        logger.error("Failed to discover files", error=e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/local-storage/queue-for-processing")
@@ -619,13 +584,11 @@ async def queue_for_processing(user_id: str, file_ids: List[str] = None):
             None, local_storage.queue_files_for_processing, file_ids
         )
         
-        logger.info(f"[LocalStorage] Queued {queued} files for user {user_id[:20]}")
         return {
             "status": "success",
             "queued": queued
         }
     except Exception as e:
-        logger.error("Failed to queue files", error=e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/local-storage/progress")
@@ -644,7 +607,6 @@ async def get_local_progress(user_id: str):
             **progress
         }
     except Exception as e:
-        logger.error("Failed to get progress", error=e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/local-storage/export")
@@ -663,7 +625,6 @@ async def export_storage(user_id: str):
             "database": database
         }
     except Exception as e:
-        logger.error("Failed to export storage", error=e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/local-storage/clear")
@@ -677,8 +638,6 @@ async def clear_local_storage(user_id: str):
         await asyncio.get_event_loop().run_in_executor(
             None, local_storage.clear_all
         )
-        logger.info(f"[LocalStorage] Cleared all local storage for user {user_id[:20]}")
         return {"status": "success", "message": "Local storage cleared"}
     except Exception as e:
-        logger.error("Failed to clear local storage", error=e)
         raise HTTPException(status_code=500, detail=str(e))

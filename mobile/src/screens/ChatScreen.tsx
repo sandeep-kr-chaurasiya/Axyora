@@ -139,8 +139,7 @@ export function ChatScreen() {
       await clearHistory();
       await logout();
     } catch (e) {
-      console.error("Logout failed:", e);
-    }
+}
   };
 
   // Reserve enough room for the floating dock so bottom content never sits under it.
@@ -358,7 +357,7 @@ export function ChatScreen() {
         <SettingsScreen
           onReindex={() => { setShowSettings(false); setShowProcessing(true); }}
           onViewIndexing={() => { setShowSettings(false); setShowProcessing(true); }}
-          onClearData={async () => console.log("Clear data")}
+          onClearData={async () => {}}
           onLogout={handleLogout}
           onClose={() => setShowSettings(false)}
         />

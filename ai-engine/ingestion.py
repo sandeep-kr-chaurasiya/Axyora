@@ -14,8 +14,7 @@ from typing import Callable, List, Optional
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from logging_config import logger
-from processor import detect_file_type
+from processing import detect_file_type
 
 class IngestionHandler(FileSystemEventHandler):
     """Handles watchdog events for file system changes."""
@@ -56,19 +55,16 @@ class IngestionEngine:
                     sha256_hash.update(byte_block)
             return sha256_hash.hexdigest()
         except Exception as e:
-            logger.error(f"Hash calculation failed for {file_path}", error=e)
             return ""
 
     def scan_directory(self):
         """Perform a full recursive scan of the monitored directory."""
-        logger.info(f"[Ingestion] Full scan started: {self.monitor_path}")
         files_found = 0
         for root, _, files in os.walk(self.monitor_path):
             for file in files:
                 full_path = str(Path(root) / file)
                 self._process_path(full_path, "initial_scan")
                 files_found += 1
-        logger.info(f"[Ingestion] Full scan completed: {files_found} files identified.")
 
     def _process_path(self, path: str, event_type: str):
         """Internal logic to evaluate a file and decide if it needs processing."""
@@ -105,7 +101,7 @@ class IngestionEngine:
             )
 
         except Exception as e:
-            logger.error(f"Error evaluating file {path}", error=e)
+            pass
 
     def start_monitoring(self):
         """Start the background watchdog observer."""
@@ -117,7 +113,6 @@ class IngestionEngine:
         self.observer = Observer()
         self.observer.schedule(event_handler, str(self.monitor_path), recursive=True)
         self.observer.start()
-        logger.info(f"[Ingestion] Background monitoring active on: {self.monitor_path}")
 
     def stop_monitoring(self):
         """Stop the background observer."""
@@ -125,7 +120,6 @@ class IngestionEngine:
             self.observer.stop()
             self.observer.join()
             self._running = False
-            logger.info("[Ingestion] Monitoring stopped.")
 
 # Example standalone usage
 if __name__ == "__main__":
